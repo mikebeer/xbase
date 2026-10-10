@@ -1,0 +1,750 @@
+/* ===================================================================== */
+/*                      STATEMENTS, ERRORS, OBJECTS, MACROS              */
+/* ===================================================================== */
+execstmts: procedure = .void
+  arg n = .int
+  s = na[n]
+  do while s > 0
+    call exec s
+    if ctl <> 0 then return
+    s = nx[s]
+  end
+  return
+
+/* condition value: .T. or .F.; others raise an error */
+condval: procedure = .int
+  arg n = .int
+  c = evalnode(n)
+  if ctl <> 0 then return 0
+  if c = 2 then return 1
+  if c = 1 then return 0
+  junk = argerr('IF')
+  return 0
+
+exec: procedure = .void
+  arg s = .int
+  t = nt[s]
+  pcln[pctop] = nl[s]
+  if t = K_EXPRSTMT then do
+    junk = evalnode(na[s])
+    return
+  end
+  if t = K_IF then do
+    if condval(na[s]) = 1 then call execstmts nb[s]
+    else if ctl = 0 & nc[s] > 0 then do
+      if nt[nc[s]] = K_IF then call exec nc[s]
+      else call execstmts nc[s]
+    end
+    return
+  end
+  if t = K_WHILE then do
+    do forever
+      if condval(na[s]) = 0 then leave
+      if ctl <> 0 then leave
+      call execstmts nb[s]
+      if ctl <> 0 then do
+        if ctl = E_EXIT then do
+          ctl = 0
+          leave
+        end
+        if ctl = E_LOOP then ctl = 0
+        else leave
+      end
+    end
+    return
+  end
+  if t = K_FOR then do
+    call execfor s
+    return
+  end
+  if t = K_STMTS then do
+    call execstmts s
+    return
+  end
+  if t = K_RETURN then do
+    v = 0
+    if na[s] > 0 then v = evalnode(na[s])
+    if ctl = 0 then do
+      retv = v
+      ctl = E_RET
+    end
+    return
+  end
+  if t = K_PRINT then do
+    call execprint s
+    return
+  end
+  if t = K_FOREACH then do
+    call execforeach s
+    return
+  end
+  if t = K_EXIT then do
+    ctl = E_EXIT
+    return
+  end
+  if t = K_LOOP then do
+    ctl = E_LOOP
+    return
+  end
+  if t = K_DOCASE then do
+    c = na[s]
+    do while c > 0
+      if na[c] = 0 then do
+        call execstmts nb[c]
+        return
+      end
+      if condval(na[c]) = 1 then do
+        call execstmts nb[c]
+        return
+      end
+      if ctl <> 0 then return
+      c = nx[c]
+    end
+    return
+  end
+  if t = K_SWITCH then do
+    call execswitch s
+    return
+  end
+  if t = K_SEQUENCE then do
+    call execsequence s
+    return
+  end
+  if t = K_BREAK then do
+    v = 0
+    if na[s] > 0 then v = evalnode(na[s])
+    if ctl = 0 then do
+      brkval = v
+      ctl = E_BRK
+    end
+    return
+  end
+  if t = K_PRIVATE | t = K_PUBLIC then do
+    p = s
+    call declmem p
+    return
+  end
+  if t = K_PARAMETERS then do
+    c = na[s]
+    i = 0
+    do while c > 0
+      i = i + 1
+      sym = na[c]
+      call pushprivate sym
+      v = 0
+      if i <= fpc then v = fv[fbase + i]
+      smv[sym] = v
+      smvd[sym] = 1
+      c = nx[c]
+    end
+    return
+  end
+  if t = K_CMD then do
+    call execcmd s
+    return
+  end
+  if t = K_SCOPED then do
+    call execscoped s
+    return
+  end
+  if t = K_SAYGET then do
+    call execsayget s
+    return
+  end
+  if t = K_TEXT then do
+    call exectext s
+    return
+  end
+  if t = K_NOP then return
+  junk = rterr('BASE', 1066, 'Internal error: unknown statement', t || '')
+  return
+
+pushprivate: procedure = .void
+  arg sym = .int
+  pvtop = pvtop + 1
+  pvs[pvtop] = sym
+  pvv[pvtop] = smv[sym]
+  pvd[pvtop] = smvd[sym]
+  return
+
+declmem: procedure = .void
+  arg p = .int
+  mleft = ne[p]
+  do while p > 0 & mleft > 0
+    mleft = mleft - 1
+    sym = na[p]
+    if nf[p] = 1 then do
+      v = evalnode(nb[p])
+      if isstr(v) = 1 then sym = intern(upper(strip(cstr[v])))
+    end
+    init = 0
+    if nb[p] > 0 & nf[p] = 0 then init = evalnode(nb[p])
+    if ctl <> 0 then return
+    if nt[p] = K_PRIVATE then do
+      call pushprivate sym
+      smv[sym] = init
+      smvd[sym] = 1
+    end
+    else do
+      if smvd[sym] = 0 | nb[p] > 0 then do
+        if nb[p] = 0 then smv[sym] = 1
+        else smv[sym] = init
+        smvd[sym] = 1
+      end
+    end
+    p = nx[p]
+  end
+  return
+
+execfor: procedure = .void
+  arg s = .int
+  v = na[s]
+  start = evalnode(nb[s])
+  stop = evalnode(nc[s])
+  step = mkint(1)
+  if nd[s] > 0 then step = evalnode(nd[s])
+  if ctl <> 0 then return
+  if (isnum(start) = 0 & isdate(start) = 0) | isnum(stop) = 0 & isdate(stop) = 0 | isnum(step) = 0 then do
+    junk = argerr('FOR')
+    return
+  end
+  call assignto v, start
+  neg = 0
+  if numval(step) < 0.0 then neg = 1
+  body = ne[s]
+  do forever
+    cur = evalnode(v)
+    if ctl <> 0 then return
+    if cur < 0 & stop < 0 then do
+      x = intval(cur)
+      y = intval(stop)
+      if neg = 0 & x > y then leave
+      if neg = 1 & x < y then leave
+    end
+    else do
+      r = cmpv(cur, stop)
+      if r = 2 then do
+        junk = argerr('FOR')
+        return
+      end
+      if neg = 0 & r > 0 then leave
+      if neg = 1 & r < 0 then leave
+    end
+    call execstmts body
+    if ctl <> 0 then do
+      if ctl = E_EXIT then do
+        ctl = 0
+        leave
+      end
+      if ctl = E_LOOP then ctl = 0
+      else leave
+    end
+    cur = evalnode(v)
+    if cur < 0 & step < 0 then nv2 = mkint(intval(cur) + intval(step))
+    else nv2 = binadd(cur, step)
+    if ctl <> 0 then return
+    call assignto v, nv2
+  end
+  return
+
+execforeach: procedure = .void
+  arg s = .int
+  v = na[s]
+  coll = evalnode(nb[s])
+  if ctl <> 0 then return
+  desc = nd[s]
+  body = nc[s]
+  if isarr(coll) = 1 then do
+    n = arrlen(coll)
+    i = 1
+    if desc = 1 then i = n
+    do forever
+      if desc = 1 then do
+        if i < 1 then leave
+      end
+      else if i > arrlen(coll) then leave
+      el = arrget(coll, i)
+      call assignto v, el
+      call execstmts body
+      if ctl = 0 then do
+        nw = evalnode(v)
+        if nw <> el & i <= arrlen(coll) then call arrset coll, i, nw
+      end
+      if ctl <> 0 then do
+        if ctl = E_EXIT then do
+          ctl = 0
+          leave
+        end
+        if ctl = E_LOOP then ctl = 0
+        else leave
+      end
+      if desc = 1 then i = i - 1
+      else i = i + 1
+    end
+    return
+  end
+  if ishash(coll) = 1 then do
+    n = hashlen(coll)
+    i = 1
+    if desc = 1 then i = n
+    do forever
+      if desc = 1 then do
+        if i < 1 then leave
+      end
+      else if i > hashlen(coll) then leave
+      call assignto v, arrget(ca2[coll], i)
+      call execstmts body
+      if ctl <> 0 then do
+        if ctl = E_EXIT then do
+          ctl = 0
+          leave
+        end
+        if ctl = E_LOOP then ctl = 0
+        else leave
+      end
+      if desc = 1 then i = i - 1
+      else i = i + 1
+    end
+    return
+  end
+  if isstr(coll) = 1 then do
+    str = cstr[coll]
+    n = length(str)
+    do i = 1 to n
+      call assignto v, mkstr(substr(str, i, 1))
+      call execstmts body
+      if ctl <> 0 then do
+        if ctl = E_EXIT then do
+          ctl = 0
+          leave
+        end
+        if ctl = E_LOOP then ctl = 0
+        else leave
+      end
+    end
+    return
+  end
+  junk = rterr('BASE', 1066, 'Argument error', 'FOR EACH')
+  return
+
+execswitch: procedure = .void
+  arg s = .int
+  v = evalnode(na[s])
+  if ctl <> 0 then return
+  c = nb[s]
+  hit = 0
+  do while c > 0
+    if hit = 0 then do
+      e = na[c]
+      do while e > 0
+        w = evalnode(e)
+        if ctl <> 0 then return
+        if exactv(v, w) = 1 then do
+          hit = 1
+          leave
+        end
+        e = nx[e]
+      end
+    end
+    if hit = 1 then do
+      call execstmts nb[c]
+      if ctl <> 0 then do
+        if ctl = E_EXIT then ctl = 0
+        return
+      end
+    end
+    c = nx[c]
+  end
+  if hit = 0 & nc[s] > 0 then call execstmts nc[s]
+  else if hit = 1 & nc[s] > 0 then call execstmts nc[s]
+  if ctl = E_EXIT then ctl = 0
+  return
+
+execsequence: procedure = .void
+  arg s = .int
+  seqdepth = seqdepth + 1
+  call execstmts na[s]
+  seqdepth = seqdepth - 1
+  caught = 0
+  if ctl = E_BRK then do
+    caught = 1
+    val = brkval
+    ctl = 0
+    if ne[s] = 1 then do
+      if nc[s] > 0 then call assignto nc[s], val
+      call execstmts nb[s]
+    end
+  end
+  if nd[s] > 0 then do
+    sc = ctl
+    ctl = 0
+    call execstmts nd[s]
+    if ctl = 0 then ctl = sc
+  end
+  return
+
+execprint: procedure = .void
+  arg s = .int
+  e = na[s]
+  txt = ''
+  first = 1
+  do while e > 0
+    v = evalnode(e)
+    if ctl <> 0 then return
+    if first = 0 then txt = txt || ' '
+    txt = txt || valstr(v)
+    if ctl <> 0 then return
+    first = 0
+    e = nx[e]
+  end
+  if setconsole = 0 then return
+  if nb[s] = 1 then do
+    if outstarted = 1 then call emitnl
+  end
+  call emit txt
+  return
+
+exectext: procedure = .void
+  arg s = .int
+  v = evalnode(na[s])
+  txt = cstr[v]
+  if nb[s] > 0 then do
+    call assignto nb[s], mkstr(txt)
+    return
+  end
+  if outstarted = 1 & outcol > 0 then call emitnl
+  call emit txt
+  call emitnl
+  return
+
+/* ===================================================================== */
+/*                                ERRORS                                 */
+/* ===================================================================== */
+initerrclass: procedure = .void
+  errcls = newclass('ERROR', 0)
+  names = 'DESCRIPTION OPERATION SUBSYSTEM SUBCODE GENCODE SEVERITY FILENAME OSCODE TRIES ARGS CANRETRY CANDEFAULT CANSUBSTITUTE CARGO'
+  do i = 1 to words(names)
+    junk = adddata(errcls, intern(word(names, i)))
+  end
+  return
+
+errset: procedure = .void
+  arg obj = .int, nm = .string, v = .int
+  sl = pm_get(2, errcls, intern(nm))
+  call arrset ca1[obj], sl, v
+  return
+
+mkerror: procedure = .int
+  arg sub = .string, code = .int, desc = .string, op = .string
+  obj = newobject(errcls)
+  call errset obj, 'DESCRIPTION', mkstr(desc)
+  call errset obj, 'OPERATION', mkstr(op)
+  call errset obj, 'SUBSYSTEM', mkstr(sub)
+  call errset obj, 'SUBCODE', mkint(code)
+  call errset obj, 'GENCODE', mkint(1)
+  call errset obj, 'SEVERITY', mkint(2)
+  call errset obj, 'FILENAME', mkstr('')
+  call errset obj, 'OSCODE', mkint(0)
+  call errset obj, 'TRIES', mkint(0)
+  call errset obj, 'CANRETRY', 1
+  call errset obj, 'CANDEFAULT', 1
+  call errset obj, 'CANSUBSTITUTE', 1
+  return obj
+
+errmessage: procedure = .string
+  arg obj = .int
+  d = cstr[arrget(ca1[obj], pm_get(2, errcls, intern('DESCRIPTION')))]
+  op = cstr[arrget(ca1[obj], pm_get(2, errcls, intern('OPERATION')))]
+  sub = cstr[arrget(ca1[obj], pm_get(2, errcls, intern('SUBSYSTEM')))]
+  code = intval(arrget(ca1[obj], pm_get(2, errcls, intern('SUBCODE'))))
+  m = 'Error ' || sub || '/' || code || '  ' || d
+  if op <> '' then m = m || ': ' || op
+  return m
+
+fatalerror: procedure = .void
+  arg obj = .int
+  call flushout
+  if outcol > 0 then do
+    call charout 'stdout', '0a'x
+    outcol = 0
+  end
+  call errout errmessage(obj)
+  i = pctop
+  do while i >= 1
+    msg = 'Called from ' || pcname[i] || '(' || pcln[i] || ')'
+    call errout msg
+    i = i - 1
+  end
+  call closeallareas
+  exit 1
+
+rterr: procedure = .int
+  arg sub = .string, code = .int, desc = .string, op = .string
+  if ctl = E_BRK then return 0
+  obj = mkerror(sub, code, desc, op)
+  if errblk <> 0 & errdepth = 0 then do
+    errdepth = errdepth + 1
+    junk = evalblock1(errblk, obj)
+    errdepth = errdepth - 1
+    if ctl <> 0 then return 0
+    return 0
+  end
+  if seqdepth > 0 then do
+    brkval = obj
+    ctl = E_BRK
+    return 0
+  end
+  call fatalerror obj
+  return 0
+
+/* ===================================================================== */
+/*                                OBJECTS                                */
+/* ===================================================================== */
+findmethod: procedure = .int
+  arg cls = .int, sym = .int
+  c = cls
+  do while c > 0
+    f = pm_get(1, c, sym)
+    if f > 0 then return f
+    c = clpar[c]
+  end
+  return 0
+
+findslot: procedure = .int
+  arg cls = .int, sym = .int
+  c = cls
+  do while c > 0
+    s = pm_get(2, c, sym)
+    if s > 0 then return s
+    c = clpar[c]
+  end
+  return 0
+
+findcdata: procedure = .int
+  arg cls = .int, sym = .int
+  c = cls
+  do while c > 0
+    s = pm_get(3, c, sym)
+    if s > 0 then return s
+    c = clpar[c]
+  end
+  return 0
+
+isderived: procedure = .int
+  arg cls = .int, anc = .int
+  c = cls
+  do while c > 0
+    if c = anc then return 1
+    c = clpar[c]
+  end
+  return 0
+
+newobject: procedure = .int
+  arg cl = .int
+  obj = newcell(T_OBJ)
+  cint[obj] = cl
+  ca1[obj] = mkarray(clnslot[cl])
+  /* initial values, parents first */
+  chain = .int[]
+  nchain = 0
+  c = cl
+  do while c > 0
+    nchain = nchain + 1
+    chain[nchain] = c
+    c = clpar[c]
+  end
+  do k = nchain to 1 by -1
+    c = chain[k]
+    do i = 1 to ncinit
+      if cinitcls[i] = c then do
+        v = evalnode(cinitnode[i])
+        call arrset ca1[obj], cinitslot[i], v
+      end
+    end
+  end
+  return obj
+
+nosuchmethod: procedure = .int
+  arg obj = .int, sym = .int
+  cn = 'NIL'
+  if isobj(obj) = 1 then cn = clname[cint[obj]]
+  else cn = typech(obj)
+  return rterr('BASE', 1004, 'No exported method', cn || ':' || snm[sym])
+
+evsend: procedure = .int
+  arg n = .int
+  onode = na[n]
+  superm = 0
+  obj = 0
+  supcls = 0
+  if nt[onode] = K_SELF then do
+    obj = curself
+    if na[onode] = 1 then superm = 1
+    if na[onode] = 2 then do
+      superm = 2
+      supcls = scls[nb[onode]]
+    end
+  end
+  else obj = evalnode(onode)
+  if ctl <> 0 then return 0
+  sym = nb[n]
+  cnt = nd[n]
+  if isobj(obj) = 0 then do
+    junk = evalargs(nc[n], ftop, 0)
+    return sendother(obj, sym, nc[n])
+  end
+  cls = cint[obj]
+  sc = cls
+  if superm = 1 then sc = clpar[curmcls]
+  if superm = 2 then sc = supcls
+  f = findmethod(sc, sym)
+  if f > 0 then do
+    base = ftop
+    slots = fnslots[f]
+    if cnt > slots then slots = cnt
+    ftop = base + slots
+    do i = 1 to slots
+      fv[base + i] = 0
+    end
+    ok = evalargs(nc[n], base, fnpar[f])
+    if ctl <> 0 then do
+      ftop = base
+      return 0
+    end
+    return invoke(f, base, cnt, obj, n)
+  end
+  sl = findslot(cls, sym)
+  if sl > 0 then do
+    junk = evalargs(nc[n], ftop, 0)
+    return arrget(ca1[obj], sl)
+  end
+  cd = findcdata(cls, sym)
+  if cd > 0 then do
+    junk = evalargs(nc[n], ftop, 0)
+    return deref(sv[cd])
+  end
+  /* built-in messages every object understands */
+  nm = snm[sym]
+  base = ftop
+  ftop = base + cnt + 8
+  do i = 1 to cnt + 8
+    fv[base + i] = 0
+  end
+  ok = evalargs(nc[n], base, cnt)
+  r = 0
+  if ctl = 0 then r = objbuiltin(obj, sym, base, cnt)
+  ftop = base
+  return r
+
+/* messages of every object; returns -1 if unknown (error raised) */
+objbuiltin: procedure = .int
+  arg obj = .int, sym = .int, base = .int, cnt = .int
+  nm = snm[sym]
+  cls = cint[obj]
+  if nm == 'NEW' | nm == 'INIT' then return obj
+  if nm == 'CLASSNAME' then return mkstr(clname[cls])
+  if nm == 'ISDERIVEDFROM' | nm == 'ISKINDOF' then do
+    a = fv[base + 1]
+    if isstr(a) = 1 then do
+      c2x = scls[intern(upper(cstr[a]))]
+      return mklog(isderived(cls, c2x))
+    end
+    return 1
+  end
+  if nm == 'CLONE' then do
+    o2 = newcell(T_OBJ)
+    cint[o2] = cls
+    s1 = ca1[obj]
+    s2 = mkarray(arrlen(s1))
+    do i = 1 to arrlen(s1)
+      call arrset s2, i, arrget(s1, i)
+    end
+    ca1[o2] = s2
+    return o2
+  end
+  if nm == 'ISOBJECT' then return 2
+  return nosuchmethod(obj, sym)
+
+/* messages sent to something that is not an object */
+sendother: procedure = .int
+  arg obj = .int, sym = .int, args = .int
+  return nosuchmethod(obj, sym)
+
+sendassign: procedure = .void
+  arg n = .int, val = .int
+  onode = na[n]
+  if nt[onode] = K_SELF then obj = curself
+  else obj = evalnode(onode)
+  if ctl <> 0 then return
+  sym = nb[n]
+  if isobj(obj) = 0 then do
+    junk = rterr('BASE', 1005, 'No exported variable', snm[sym])
+    return
+  end
+  cls = cint[obj]
+  sl = findslot(cls, sym)
+  if sl > 0 then do
+    call arrset ca1[obj], sl, val
+    return
+  end
+  cd = findcdata(cls, sym)
+  if cd > 0 then do
+    v = sv[cd]
+    if v > 2 then do
+      if ctag[v] = T_REF then do
+        ca1[v] = val
+        return
+      end
+    end
+    sv[cd] = val
+    return
+  end
+  junk = rterr('BASE', 1005, 'No exported variable', clname[cls] || ':' || snm[sym])
+  return
+
+/* ===================================================================== */
+/*                                MACROS                                 */
+/* ===================================================================== */
+compileexpr: procedure = .int
+  arg s = .string
+  key = intern('M$' || s)
+  if smacro[key] > 0 then return smacro[key]
+  otp = tp
+  ontok = ntok
+  ocx = curcx
+  oinf = infunc
+  onv = nvar
+  ocf = curfn
+  ofl = curline
+  oblk = inblk
+  start = ntok + 1
+  perrflag = 0
+  inblk = 0
+  call lexchunk s, 0
+  call addtok E_EOL, '', 0
+  call addtok E_EOF, '', 0
+  tp = start
+  curcx = 0
+  infunc = 0
+  node = parseexpr()
+  if tk[tp] <> E_EOL & perrflag = 0 then call perr 'Syntax error in macro near ' || ts[tp]
+  bad = perrflag
+  perrflag = 0
+  tp = otp
+  ntok = ontok
+  curcx = ocx
+  infunc = oinf
+  nvar = onv
+  curfn = ocf
+  curline = ofl
+  inblk = oblk
+  if bad = 1 then return 0
+  smacro[key] = node
+  return node
+
+macroeval: procedure = .int
+  arg s = .string
+  if strip(s) == '' then return 0
+  node = compileexpr(s)
+  if node = 0 then return rterr('BASE', 1449, 'Syntax error', 'macro: ' || s)
+  return evalnode(node)

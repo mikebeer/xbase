@@ -1,0 +1,696 @@
+/* ===================================================================== */
+/*                         PARSER: STATEMENTS                            */
+/* ===================================================================== */
+listcount = 0
+
+/* comma separated expressions; returns head, sets listcount */
+parselist: procedure = .int
+  head = 0
+  tail = 0
+  cnt = 0
+  do forever
+    e = parseexpr()
+    cnt = cnt + 1
+    if head = 0 then head = e
+    else nx[tail] = e
+    tail = e
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  listcount = cnt
+  return head
+
+/* adjacent tokens joined into one string constant (file names, aliases) */
+bareword: procedure = .int
+  s = tor[tp]
+  call adv
+  do while tsp[tp] = 0 & tk[tp] <> E_EOL & tk[tp] <> E_EOF
+    s = s || tor[tp]
+    call adv
+  end
+  return constnode(mkstr(s))
+
+/* a file name: string, expression in parentheses, macro or bare word */
+filearg: procedure = .int
+  if tk[tp] = E_STR | isop('(') = 1 | isop('&') = 1 then return parseexpr()
+  if tk[tp] = E_IDENT | tk[tp] = E_OP then return bareword()
+  return parseexpr()
+
+/* a name that may be a bare word: alias, area */
+aliasarg: procedure = .int
+  if tk[tp] = E_IDENT then do
+    s = ts[tp]
+    call adv
+    return constnode(mkstr(s))
+  end
+  return parseexpr()
+
+endkw: procedure = .int
+  /* current token is an END-like keyword for a construct; consume END [word] */
+  return 0
+
+iscloser: procedure = .int
+  if tk[tp] <> E_IDENT then return 0
+  w = ts[tp]
+  if w == 'ELSE' | w == 'ELSEIF' | w == 'ENDIF' | w == 'ENDDO' | w == 'NEXT' | w == 'ENDCASE' | w == 'CASE' | w == 'OTHERWISE' | w == 'END' | w == 'ENDSWITCH' | w == 'ENDWITH' | w == 'RECOVER' | w == 'ALWAYS' | w == 'CATCH' | w == 'FINALLY' | w == 'ENDTRY' | w == 'ENDCLASS' | w == 'FUNCTION' | w == 'PROCEDURE' | w == 'METHOD' | w == 'ENDTEXT' then return 1
+  if w == 'STATIC' | w == 'INIT' | w == 'EXIT' then do
+    if nextisword('FUNCTION') = 1 | nextisword('PROCEDURE') = 1 then return 1
+  end
+  if w == 'CREATE' then do
+    if nextisword('CLASS') = 1 then return 1
+  end
+  if w == 'FUNC' | w == 'PROC' then return 1
+  return 0
+
+/* statements until a closer keyword or the end of input */
+parsestmts: procedure = .int
+  head = 0
+  tail = 0
+  do forever
+    call skipeol
+    if tk[tp] = E_EOF then leave
+    if iscloser() = 1 then leave
+    if perrflag = 1 then leave
+    st = parsestmt()
+    if st = 0 then iterate
+    if head = 0 then head = st
+    else nx[tail] = st
+    tail = st
+    do while nx[tail] > 0
+      tail = nx[tail]
+    end
+  end
+  return mknode(K_STMTS, head, 0, 0)
+
+/* consume the rest of the line */
+skipline: procedure = .void
+  do while tk[tp] <> E_EOL & tk[tp] <> E_EOF
+    call adv
+  end
+  return
+
+/* END / ENDIF etc.: consume, optionally followed by a word like IF */
+closewith: procedure = .void
+  arg specific = .string
+  if isword(specific) = 1 then do
+    call adv
+    return
+  end
+  if isword('END') = 1 then do
+    call adv
+    if tk[tp] = E_IDENT then do
+      w = ts[tp]
+      if w == 'IF' | w == 'DO' | w == 'CASE' | w == 'SEQUENCE' | w == 'SWITCH' | w == 'WITH' | w == 'TRY' | w == 'CLASS' | w == 'TEXT' then call adv
+    end
+    return
+  end
+  call perr 'Syntax error: ' || specific || ' expected near line ' || tl[tp]
+  return
+
+isassignop: procedure = .int
+  /* is the next token (after the current identifier) an assignment-like operator? */
+  if tp >= ntok then return 0
+  if tk[tp + 1] <> E_OP then return 0
+  o = ts[tp + 1]
+  if o == ':=' | o == '+=' | o == '-=' | o == '*=' | o == '/=' | o == '%=' | o == '^=' | o == '**=' | o == '=' | o == '++' | o == '--' | o == '->' | o == ':' | o == '[' | o == '.' then return 1
+  return 0
+
+parsestmt: procedure = .int
+  curline = tl[tp]
+  k = tk[tp]
+  if k = E_OP then do
+    o = ts[tp]
+    if o == '?' | o == '??' then return parseprint()
+    if o == '@' then do
+      if tp < ntok then do
+        if tk[tp + 1] = E_IDENT then return parseat()
+        if tk[tp + 1] = E_OP then return parseexprstmt()
+      end
+      return parseat()
+    end
+    if o == '!' then do
+      call skipline
+      return 0
+    end
+    return parseexprstmt()
+  end
+  if k <> E_IDENT then do
+    call perr 'Syntax error near ' || ts[tp]
+    return 0
+  end
+  w = ts[tp]
+  /* names followed by an operator are expressions, not commands */
+  if isassignop() = 1 then return parseexprstmt()
+  if tp < ntok then do
+    if tk[tp + 1] = E_OP then do
+      if ts[tp + 1] == '(' then do
+        if w <> 'USE' & w <> 'GO' & w <> 'GOTO' & w <> 'SKIP' & w <> 'SELECT' & w <> 'SEEK' & w <> 'IF' & w <> 'WHILE' & w <> 'RETURN' & w <> 'DO' & w <> 'FOR' & w <> 'CASE' & w <> 'ELSEIF' & w <> 'DELETE' & w <> 'RECALL' & w <> 'SWITCH' & w <> 'ACCEPT' & w <> 'INPUT' & w <> 'WAIT' & w <> 'STORE' & w <> 'ERASE' & w <> 'RENAME' & w <> 'REPLACE' & w <> 'LOCATE' & w <> 'COUNT' & w <> 'SUM' & w <> 'LIST' & w <> 'DISPLAY' & w <> 'PRIVATE' & w <> 'PUBLIC' & w <> 'LOCAL' & w <> 'STATIC' & w <> 'BREAK' & w <> 'RELEASE' & w <> 'KEYBOARD' then return parseexprstmt()
+      end
+    end
+  end
+  if w == 'IF' then return parseif()
+  if w == 'DO' then return parsedo()
+  if w == 'WHILE' then return parsewhile()
+  if w == 'FOR' then return parsefor()
+  if w == 'LOCAL' then return parselocal()
+  if w == 'RETURN' then do
+    call adv
+    e = 0
+    if atend() = 0 then e = parseexpr()
+    return mknode(K_RETURN, e, 0, 0)
+  end
+  if w == 'EXIT' then do
+    call adv
+    return mknode(K_EXIT, 0, 0, 0)
+  end
+  if w == 'LOOP' then do
+    call adv
+    return mknode(K_LOOP, 0, 0, 0)
+  end
+  if w == 'BREAK' then do
+    call adv
+    e = 0
+    if atend() = 0 then e = parseexpr()
+    return mknode(K_BREAK, e, 0, 0)
+  end
+  if w == 'BEGIN' then return parsebegin()
+  if w == 'TRY' then return parsetry()
+  if w == 'SWITCH' then return parseswitch()
+  if w == 'STATIC' then return parsestatic()
+  if w == 'PRIVATE' | w == 'PUBLIC' then return parsemem()
+  if w == 'PARAMETERS' | w == 'LPARAMETERS' then return parseparameters()
+  if w == 'WITH' then do
+    call perr 'WITH OBJECT is not supported'
+    return 0
+  end
+  if w == 'TEXT' then return parsetext()
+  if w == 'MEMVAR' | w == 'FIELD' | w == 'DECLARE' | w == 'EXTERNAL' | w == 'REQUEST' | w == 'DYNAMIC' | w == 'ANNOUNCE' | w == 'NOTE' then do
+    call skipline
+    return 0
+  end
+  if w == 'ENDIF' | w == 'ENDDO' | w == 'NEXT' then do
+    call perr 'Syntax error: unexpected ' || w
+    return 0
+  end
+  c = parsecmd(w)
+  if c <> 0 then return c
+  if perrflag = 1 then return 0
+  return parseexprstmt()
+
+/* expression statement: a call, an assignment, x++ ... */
+parseexprstmt: procedure = .int
+  e = parseexpr()
+  if nt[e] = K_EQ then do
+    l = na[e]
+    if isassignable(l) = 1 then e = mknode(K_ASSIGN, l, nb[e], 0)
+  end
+  if atend() = 0 & perrflag = 0 then call perr 'Syntax error near ' || ts[tp]
+  return mknode(K_EXPRSTMT, e, 0, 0)
+
+parseprint: procedure = .int
+  kind = 1
+  if ts[tp] == '??' then kind = 2
+  call adv
+  head = 0
+  if atend() = 0 then head = parselist()
+  n = mknode(K_PRINT, head, kind, 0)
+  /* ignore trailing PICTURE etc. */
+  call skipline
+  return n
+
+parseif: procedure = .int
+  call adv
+  cond = parseexpr()
+  call skipline
+  thenb = parsestmts()
+  elseb = 0
+  if isword('ELSEIF') = 1 then do
+    elseb = parseif()
+    return mknode(K_IF, cond, thenb, elseb)
+  end
+  if isword('ELSE') = 1 then do
+    call adv
+    call skipline
+    elseb = parsestmts()
+  end
+  call closewith 'ENDIF'
+  return mknode(K_IF, cond, thenb, elseb)
+
+parsewhile: procedure = .int
+  call adv
+  cond = parseexpr()
+  call skipline
+  body = parsestmts()
+  call closewith 'ENDDO'
+  return mknode(K_WHILE, cond, body, 0)
+
+parsedo: procedure = .int
+  call adv
+  if isword('WHILE') = 1 then return parsewhile()
+  if isword('CASE') = 1 then do
+    call adv
+    call skipline
+    return parsedocase()
+  end
+  /* DO proc [WITH args] */
+  if tk[tp] <> E_IDENT then do
+    call perr 'Syntax error after DO'
+    return 0
+  end
+  sym = tv[tp]
+  call adv
+  args = 0
+  cnt = 0
+  if isword('WITH') = 1 then do
+    call adv
+    args = parselist()
+    cnt = listcount
+  end
+  e = mknode(K_CALL, sym, args, cnt)
+  return mknode(K_EXPRSTMT, e, 0, 0)
+
+parsedocase: procedure = .int
+  head = 0
+  tail = 0
+  do forever
+    call skipeol
+    if isword('CASE') = 1 then do
+      call adv
+      cond = parseexpr()
+      call skipline
+      body = parsestmts()
+      cn = mknode(K_NOP, cond, body, 0)
+      if head = 0 then head = cn
+      else nx[tail] = cn
+      tail = cn
+      iterate
+    end
+    if isword('OTHERWISE') = 1 | isword('ELSE') = 1 then do
+      call adv
+      call skipline
+      body = parsestmts()
+      cn = mknode(K_NOP, 0, body, 0)
+      if head = 0 then head = cn
+      else nx[tail] = cn
+      tail = cn
+      iterate
+    end
+    leave
+  end
+  call closewith 'ENDCASE'
+  return mknode(K_DOCASE, head, 0, 0)
+
+parseswitch: procedure = .int
+  call adv
+  e = parseexpr()
+  call skipline
+  head = 0
+  tail = 0
+  other = 0
+  do forever
+    call skipeol
+    if isword('CASE') = 1 then do
+      call adv
+      vals = parselist()
+      call skipline
+      body = parsestmts()
+      cn = mknode(K_NOP, vals, body, 0)
+      if head = 0 then head = cn
+      else nx[tail] = cn
+      tail = cn
+      iterate
+    end
+    if isword('OTHERWISE') = 1 | isword('DEFAULT') = 1 then do
+      call adv
+      call skipline
+      other = parsestmts()
+      iterate
+    end
+    leave
+  end
+  call closewith 'ENDSWITCH'
+  return mknode(K_SWITCH, e, head, other)
+
+parsefor: procedure = .int
+  call adv
+  if isword('EACH') = 1 then do
+    call adv
+    v = parsepostfix()
+    if isword('IN') = 1 then call adv
+    else call perr 'Syntax error: IN expected'
+    coll = parseexpr()
+    desc = 0
+    if isword('DESCEND') = 1 then do
+      call adv
+      desc = 1
+    end
+    call skipline
+    body = parsestmts()
+    call closewith 'NEXT'
+    n = mknode(K_FOREACH, v, coll, body)
+    nd[n] = desc
+    return n
+  end
+  v = parsepostfix()
+  if isop(':=') = 1 | isop('=') = 1 then call adv
+  else call perr 'Syntax error: := expected in FOR'
+  start = parseexpr()
+  if isword('TO') = 1 then call adv
+  else call perr 'Syntax error: TO expected in FOR'
+  stop = parseexpr()
+  step = 0
+  if isword('STEP') = 1 then do
+    call adv
+    step = parseexpr()
+  end
+  call skipline
+  body = parsestmts()
+  call closewith 'NEXT'
+  n = mknode(K_FOR, v, start, stop)
+  nd[n] = step
+  ne[n] = body
+  return n
+
+parsebegin: procedure = .int
+  call adv
+  if isword('SEQUENCE') = 0 then do
+    call perr 'Syntax error: SEQUENCE expected after BEGIN'
+    return 0
+  end
+  call adv
+  if isword('WITH') = 1 then do
+    call adv
+    junk = parseexpr()
+  end
+  call skipline
+  return parseseqbody()
+
+parsetry: procedure = .int
+  call adv
+  call skipline
+  return parseseqbody()
+
+parseseqbody: procedure = .int
+  body = parsestmts()
+  rec = 0
+  var = 0
+  has = 0
+  always = 0
+  if isword('RECOVER') = 1 | isword('CATCH') = 1 then do
+    call adv
+    has = 1
+    if isword('USING') = 1 then call adv
+    if tk[tp] = E_IDENT then do
+      var = parsepostfix()
+    end
+    call skipline
+    rec = parsestmts()
+  end
+  if isword('ALWAYS') = 1 | isword('FINALLY') = 1 then do
+    call adv
+    call skipline
+    always = parsestmts()
+  end
+  call closewith 'ENDTRY'
+  n = mknode(K_SEQUENCE, body, rec, var)
+  nd[n] = always
+  ne[n] = has
+  return n
+
+/* local declarations */
+parselocal: procedure = .int
+  call adv
+  if infunc = 0 | curcx = 0 then do
+    call perr 'LOCAL outside of a function'
+    return 0
+  end
+  head = 0
+  tail = 0
+  do forever
+    if tk[tp] <> E_IDENT then do
+      call perr 'Syntax error in LOCAL'
+      leave
+    end
+    sym = tv[tp]
+    call adv
+    sl = newslot()
+    junk = declvar(sym, 1, sl)
+    init = 0
+    if isop(':=') = 1 | isop('=') = 1 then do
+      call adv
+      init = parseexpr()
+    end
+    else if isop('[') = 1 then do
+      call adv
+      args = parselist()
+      cnt = listcount
+      call expectop ']'
+      init = mknode(K_CALL, intern('ARRAY'), args, cnt)
+    end
+    if init > 0 then do
+      st = mknode(K_EXPRSTMT, mknode(K_ASSIGN, mknode(K_LOCAL, sl, 0, 0), init, 0), 0, 0)
+      if head = 0 then head = st
+      else nx[tail] = st
+      tail = st
+    end
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  if head = 0 then return 0
+  return head
+
+tail2: procedure = .int
+  arg h = .int
+  t = h
+  do while nx[t] > 0
+    t = nx[t]
+  end
+  return t
+
+parsestatic: procedure = .int
+  call adv
+  if isword('FUNCTION') = 1 | isword('PROCEDURE') = 1 then do
+    call perr 'Syntax error: nested function'
+    return 0
+  end
+  head = 0
+  tail = 0
+  do forever
+    if tk[tp] <> E_IDENT then do
+      call perr 'Syntax error in STATIC'
+      leave
+    end
+    sym = tv[tp]
+    call adv
+    nstatic = nstatic + 1
+    idx = nstatic
+    sv[idx] = 0
+    if infunc = 1 & curcx > 0 then junk = declvar(sym, 2, idx)
+    else do
+      nmst = nmst + 1
+      mstname[nmst] = sym
+      mstidx[nmst] = idx
+    end
+    init = 0
+    if isop(':=') = 1 | isop('=') = 1 then do
+      call adv
+      init = parseexpr()
+    end
+    else if isop('[') = 1 then do
+      call adv
+      args = parselist()
+      cnt = listcount
+      call expectop ']'
+      init = mknode(K_CALL, intern('ARRAY'), args, cnt)
+    end
+    if init > 0 then do
+      nsvinit = nsvinit + 1
+      svinit[nsvinit] = init
+      svslot[nsvinit] = idx
+    end
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  return 0
+
+parsemem: procedure = .int
+  kind = K_PRIVATE
+  if ts[tp] == 'PUBLIC' then kind = K_PUBLIC
+  call adv
+  head = 0
+  tail = 0
+  st = 0
+  mcnt = 0
+  do forever
+    if isop('&') = 1 then do
+      call adv
+      e = parseprimary()
+      st = mknode(kind, 0, 0, 0)
+      nb[st] = e
+      nf[st] = 1
+    end
+    else do
+      if tk[tp] <> E_IDENT then do
+        call perr 'Syntax error in PRIVATE/PUBLIC'
+        leave
+      end
+      sym = tv[tp]
+      call adv
+      init = 0
+      if isop(':=') = 1 | isop('=') = 1 then do
+        call adv
+        init = parseexpr()
+      end
+      else if isop('[') = 1 then do
+        call adv
+        args = parselist()
+        cnt = listcount
+        call expectop ']'
+        init = mknode(K_CALL, intern('ARRAY'), args, cnt)
+      end
+      st = mknode(kind, sym, init, 0)
+    end
+    if head = 0 then head = st
+    else nx[tail] = st
+    tail = st
+    mcnt = mcnt + 1
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  if head > 0 then ne[head] = mcnt
+  return head
+
+parseparameters: procedure = .int
+  call adv
+  head = 0
+  tail = 0
+  cnt = 0
+  do forever
+    if tk[tp] <> E_IDENT then leave
+    cn = mknode(K_NOP, tv[tp], 0, 0)
+    call adv
+    cnt = cnt + 1
+    if head = 0 then head = cn
+    else nx[tail] = cn
+    tail = cn
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  if curfn > 0 then do
+    if fnpar[curfn] < cnt then fnpar[curfn] = cnt
+    if cxnslot[curcx] < cnt then cxnslot[curcx] = cnt
+  end
+  return mknode(K_PARAMETERS, head, cnt, 0)
+
+parsetext: procedure = .int
+  call adv
+  var = 0
+  if isword('TO') = 1 then do
+    call adv
+    if isword('FILE') = 1 | isword('PRINTER') = 1 then call skipline
+    else var = parsepostfix()
+  end
+  s = ''
+  if tk[tp] = E_STR then do
+    s = ts[tp]
+    call adv
+  end
+  return mknode(K_TEXT, constnode(mkstr(s)), var, 0)
+
+/* -------------------------------------------------------------- @ SAY GET */
+parseat: procedure = .int
+  call adv
+  r = parseexpr()
+  call expectop ','
+  c = parseexpr()
+  n = mknode(K_SAYGET, r, c, 0)
+  hold = mknode(K_NOP, 0, 0, 0)
+  nf[n] = hold
+  do forever
+    if atend() = 1 then leave
+    if perrflag = 1 then leave
+    if isword('SAY') = 1 then do
+      call adv
+      nc[n] = parseexpr()
+      iterate
+    end
+    if isword('GET') = 1 then do
+      call adv
+      nd[n] = parsepostfix()
+      iterate
+    end
+    if isword('PICTURE') = 1 then do
+      call adv
+      p = parseexpr()
+      if nd[n] > 0 then nb[hold] = p
+      else na[hold] = p
+      iterate
+    end
+    if isword('VALID') = 1 then do
+      call adv
+      nc[hold] = parseexpr()
+      iterate
+    end
+    if isword('WHEN') = 1 then do
+      call adv
+      nd[hold] = parseexpr()
+      iterate
+    end
+    if isword('COLOR') = 1 | isword('MESSAGE') = 1 | isword('RANGE') = 1 | isword('FONT') = 1 | isword('SEND') = 1 then do
+      call adv
+      junk = parseexpr()
+      if isop(',') = 1 then do
+        call adv
+        junk = parseexpr()
+      end
+      iterate
+    end
+    if isword('CLEAR') = 1 then do
+      call adv
+      ne[n] = 1
+      if isword('TO') = 1 then do
+        call adv
+        junk = parseexpr()
+        call expectop ','
+        junk = parseexpr()
+      end
+      iterate
+    end
+    if isword('TO') = 1 then do
+      call adv
+      junk = parseexpr()
+      call expectop ','
+      junk = parseexpr()
+      ne[n] = 2
+      iterate
+    end
+    if isword('DOUBLE') = 1 | isword('BOX') = 1 then do
+      call adv
+      if atend() = 0 then junk = parseexpr()
+      iterate
+    end
+    if isop(',') = 1 then do
+      /* @ r1,c1,r2,c2 BOX ... */
+      call adv
+      junk = parseexpr()
+      iterate
+    end
+    call perr 'Syntax error in @ command near ' || ts[tp]
+    leave
+  end
+  return n

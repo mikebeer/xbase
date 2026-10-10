@@ -1,0 +1,871 @@
+/* ===================================================================== */
+/*                 EXECUTION OF DATABASE AND CONSOLE COMMANDS            */
+/* ===================================================================== */
+sc_a = 0
+sc_lim = 0
+sc_single = 0
+sc_done = 0
+sc_for = 0
+sc_while = 0
+atrow = -1
+
+evstr: procedure = .string
+  arg n = .int
+  if n = 0 then return ''
+  v = evalnode(n)
+  if ctl <> 0 then return ''
+  if isstr(v) = 0 then return valstr(v)
+  return cstr[v]
+
+evint: procedure = .int
+  arg n = .int, dflt = .int
+  if n = 0 then return dflt
+  v = evalnode(n)
+  if ctl <> 0 then return dflt
+  if isnum(v) = 0 then return dflt
+  return toint(numval(v))
+
+needarea: procedure = .int
+  if curarea < 1 then return rterr('DBFNTX', 2001, 'Workarea not in use', '')
+  if wa_used[curarea] = 0 then return rterr('DBFNTX', 2001, 'Workarea not in use', '')
+  return curarea
+
+areaof: procedure = .int
+  arg an = .int
+  if an = 0 then return needarea()
+  a = resolvealias(an)
+  if ctl <> 0 then return 0
+  if a < 1 | a > 40 then return rterr('BASE', 1002, 'Alias does not exist', '')
+  return a
+
+/* USE ... : open a table in a work area */
+douse: procedure = .void
+  arg s = .int
+  fl = nf[s]
+  if nb[s] = 0 then do
+    if curarea > 0 then call closearea curarea
+    return
+  end
+  f = evstr(nb[s])
+  if ctl <> 0 then return
+  if fl % 2 = 1 | curarea < 1 then a = findfreearea()
+  else a = curarea
+  if a = 0 then do
+    junk = rterr('DBFNTX', 1001, 'No free work area', f)
+    return
+  end
+  if wa_used[a] = 1 then call closearea a
+  al = ''
+  if nc[s] > 0 then al = upper(strip(evstr(nc[s])))
+  if al == '' then al = dbfstem(f)
+  if aliasarea(al) > 0 then do
+    junk = rterr('DBFNTX', 1001, 'Alias already in use', al)
+    return
+  end
+  ro = 0
+  if (fl / 8) % 2 = 1 then ro = 1
+  if openarea(a, f, al, ro) = 0 then return
+  curarea = a
+  x = nd[s]
+  do while x > 0
+    junk = openindex(a, evstr(x))
+    if ctl <> 0 then return
+    x = nx[x]
+  end
+  return
+
+doclose: procedure = .void
+  arg s = .int
+  if nf[s] = 1 then do
+    call closeallareas
+    curarea = 0
+    return
+  end
+  if nf[s] = 2 then do
+    if curarea > 0 then do
+      wa_nix[curarea] = 0
+      wa_order[curarea] = 0
+    end
+    return
+  end
+  if nb[s] > 0 then do
+    a = areaof(nb[s])
+    if ctl = 0 then call closearea a
+    return
+  end
+  if curarea > 0 then call closearea curarea
+  return
+
+doselect: procedure = .void
+  arg s = .int
+  an = nb[s]
+  if nt[an] = K_CONST then do
+    v = na[an]
+    if isnum(v) = 1 then do
+      k = toint(numval(v))
+      if k = 0 then k = findfreearea()
+      curarea = k
+      return
+    end
+    if isstr(v) = 1 then do
+      a = aliasarea(upper(strip(cstr[v])))
+      if a = 0 then do
+        if upper(strip(cstr[v])) == 'NEW' then curarea = findfreearea()
+        else junk = rterr('BASE', 1002, 'Alias does not exist', upper(cstr[v]))
+        return
+      end
+      curarea = a
+      return
+    end
+  end
+  v = evalnode(an)
+  if ctl <> 0 then return
+  if isnum(v) = 1 then do
+    k = toint(numval(v))
+    if k = 0 then k = findfreearea()
+    curarea = k
+    return
+  end
+  if isstr(v) = 1 then do
+    a = aliasarea(upper(strip(cstr[v])))
+    if a = 0 then junk = rterr('BASE', 1002, 'Alias does not exist', upper(cstr[v]))
+    else curarea = a
+  end
+  return
+
+doindex: procedure = .void
+  arg s = .int
+  a = needarea()
+  if ctl <> 0 then return
+  ktxt = ns[s]
+  p = pos('01'x, ktxt)
+  ftxt = ''
+  if p > 0 then do
+    ftxt = substr(ktxt, p + 1)
+    ktxt = substr(ktxt, 1, p - 1)
+  end
+  fname = ''
+  if nc[s] > 0 then fname = evstr(nc[s])
+  if ctl <> 0 then return
+  fl = nf[s]
+  if setunique = 1 then fl = fl % 2 + (fl / 2) * 2 + (1 - fl % 2)
+  junk = createindex(a, nb[s], fname, nd[s], fl, ktxt, ftxt)
+  return
+
+doset: procedure = .void
+  arg s = .int
+  nm = ns[s]
+  onoff = nc[s]
+  if nm == 'DELETED' then do
+    if onoff = 1 then setdeleted = 1
+    else setdeleted = 0
+    return
+  end
+  if nm == 'SOFTSEEK' then do
+    if onoff = 1 then setsoft = 1
+    else setsoft = 0
+    return
+  end
+  if nm == 'EXACT' then do
+    if onoff = 1 then setexact = 1
+    else setexact = 0
+    return
+  end
+  if nm == 'FIXED' then do
+    if onoff = 1 then setfixed = 1
+    else setfixed = 0
+    return
+  end
+  if nm == 'CENTURY' then do
+    if onoff = 1 then setcentury = 1
+    else setcentury = 0
+    return
+  end
+  if nm == 'CONSOLE' then do
+    if onoff = 1 then setconsole = 1
+    else if onoff = 2 then setconsole = 0
+    return
+  end
+  if nm == 'UNIQUE' then do
+    if onoff = 1 then setunique = 1
+    else setunique = 0
+    return
+  end
+  if nm == 'DECIMALS' then do
+    setdec = evint(nb[s], 2)
+    return
+  end
+  if nm == 'EPOCH' then do
+    setepoch = evint(nb[s], 1900)
+    return
+  end
+  if nm == 'DATE' then do
+    if nb[s] > 0 then call setdate evstr(nb[s])
+    return
+  end
+  if nm == 'DEFAULT' | nm == 'PATH' then do
+    if nb[s] > 0 then setdefault = evstr(nb[s])
+    return
+  end
+  if nm == 'FILTER' then do
+    a = needarea()
+    if ctl <> 0 then return
+    wa_filter[a] = nb[s]
+    call dbgotop a
+    return
+  end
+  if nm == 'ORDER' then do
+    a = needarea()
+    if ctl <> 0 then return
+    n = evint(nb[s], 0)
+    if n < 0 | n > wa_nix[a] then n = 0
+    if n = 0 then wa_order[a] = 0
+    else wa_order[a] = waix[(a - 1) * 8 + n]
+    call dbgotop a
+    return
+  end
+  if nm == 'INDEX' then do
+    a = needarea()
+    if ctl <> 0 then return
+    wa_nix[a] = 0
+    wa_order[a] = 0
+    x = nd[s]
+    do while x > 0
+      junk = openindex(a, evstr(x))
+      if ctl <> 0 then return
+      x = nx[x]
+    end
+    if wa_nix[a] > 0 then call dbgotop a
+    return
+  end
+  if nm == 'RELATION' then do
+    a = needarea()
+    if ctl <> 0 then return
+    wa_nrel[a] = 0
+    k = nd[s]
+    do while k > 0
+      al = nx[k]
+      ch = resolvealias(al)
+      if ctl <> 0 then return
+      wa_nrel[a] = wa_nrel[a] + 1
+      wa_relchild[(a - 1) * 8 + wa_nrel[a]] = ch
+      wa_relkey[(a - 1) * 8 + wa_nrel[a]] = k
+      k = nx[al]
+    end
+    call relsync a
+    return
+  end
+  return
+
+doclear: procedure = .void
+  arg s = .int
+  if nf[s] = 2 | nf[s] = 3 then do
+    do i = 1 to nsym
+      smvd[i] = 0
+      smv[i] = 0
+    end
+  end
+  if nf[s] = 3 then call closeallareas
+  return
+
+dorelease: procedure = .void
+  arg s = .int
+  if nf[s] = 1 then do
+    do i = 1 to nsym
+      smvd[i] = 0
+      smv[i] = 0
+    end
+    return
+  end
+  x = nb[s]
+  do while x > 0
+    if nt[x] = K_MEMVAR | nt[x] = K_IDENT then do
+      sym = na[x]
+      smvd[sym] = 0
+      smv[sym] = 0
+    end
+    x = nx[x]
+  end
+  return
+
+dostore: procedure = .void
+  arg s = .int
+  v = evalnode(nb[s])
+  if ctl <> 0 then return
+  x = nc[s]
+  do while x > 0
+    call assignnew x, cloneval(v)
+    if ctl <> 0 then return
+    x = nx[x]
+  end
+  return
+
+doprompt: procedure = .void
+  arg s = .int
+  if nb[s] > 0 then do
+    txt = evstr(nb[s])
+    if ctl <> 0 then return
+    call emit txt
+  end
+  return
+
+doaccept: procedure = .void
+  arg s = .int
+  call doprompt s
+  line = readcon()
+  call emitnl
+  if nc[s] > 0 then call assignnew nc[s], mkstr(line)
+  return
+
+doinput: procedure = .void
+  arg s = .int
+  call doprompt s
+  do forever
+    line = strip(readcon())
+    call emitnl
+    if ineof = 1 then return
+    if line == '' then do
+      return
+    end
+    nd2 = compileexpr(line)
+    if nd2 = 0 then do
+      call emit 'Invalid expression, re-enter: '
+      iterate
+    end
+    v = evalnode(nd2)
+    if ctl <> 0 then return
+    if nc[s] > 0 then call assignnew nc[s], v
+    return
+  end
+  return
+
+dowait: procedure = .void
+  arg s = .int
+  if nb[s] > 0 then call doprompt s
+  else call emit 'Press any key to continue...'
+  c = readkey()
+  txt = ''
+  if c > 0 & c <> 13 then txt = d2c(c)
+  if c = 13 then do
+    /* a line end counts as the key */
+    txt = ''
+  end
+  if nc[s] > 0 then call assignnew nc[s], mkstr(txt)
+  call emitnl
+  return
+
+execcmd: procedure = .void
+  arg s = .int
+  cmd = na[s]
+  if cmd = C_USE then call douse s
+  else if cmd = C_SELECT then call doselect s
+  else if cmd = C_GO then do
+    a = areaof(nc[s])
+    if ctl <> 0 then return
+    if nf[s] = 1 then call dbgotop a
+    else if nf[s] = 2 then call dbgobottom a
+    else call dbgoto a, evint(nb[s], 0)
+  end
+  else if cmd = C_SKIP then do
+    a = areaof(nc[s])
+    if ctl <> 0 then return
+    call dbskip a, evint(nb[s], 1)
+  end
+  else if cmd = C_SEEK then do
+    a = needarea()
+    if ctl <> 0 then return
+    v = evalnode(nb[s])
+    if ctl <> 0 then return
+    junk = dbseek(a, v, nf[s])
+  end
+  else if cmd = C_APPEND then do
+    a = needarea()
+    if ctl <> 0 then return
+    if nf[s] = 2 then call doappendfrom s
+    else call dbappend a
+  end
+  else if cmd = C_CONTINUE then call docontinue
+  else if cmd = C_PACK then do
+    a = needarea()
+    if ctl = 0 then call dbpack a
+  end
+  else if cmd = C_ZAP then do
+    a = needarea()
+    if ctl = 0 then call dbzap a
+  end
+  else if cmd = C_COMMIT then do
+    do a = 1 to 40
+      if wa_used[a] = 1 then do
+        call flushdbf a
+        call flushindexes a
+      end
+    end
+  end
+  else if cmd = C_REINDEX then do
+    a = needarea()
+    if ctl = 0 then call reindexall a
+  end
+  else if cmd = C_INDEX then call doindex s
+  else if cmd = C_CLOSE then call doclose s
+  else if cmd = C_SET then call doset s
+  else if cmd = C_CLEAR then call doclear s
+  else if cmd = C_ERASE then do
+    f = evstr(nb[s])
+    if ctl = 0 & fileexists(f) = 1 then junk = eraseFile(f)
+  end
+  else if cmd = C_RENAME then do
+    f = evstr(nb[s])
+    g = evstr(nc[s])
+    if ctl = 0 & fileexists(f) = 1 then do
+      junk = putbytes(g, bytesof(f))
+      junk = eraseFile(f)
+    end
+  end
+  else if cmd = C_ACCEPT then call doaccept s
+  else if cmd = C_INPUT then call doinput s
+  else if cmd = C_WAIT then call dowait s
+  else if cmd = C_READ then call doread
+  else if cmd = C_QUIT then call doquit 0
+  else if cmd = C_RELEASE then call dorelease s
+  else if cmd = C_STORE then call dostore s
+  else if cmd = C_KEYBOARD then do
+    t = evstr(nb[s])
+    if inhave = 1 then inbuf = t || inbuf
+    else do
+      inbuf = t
+      inhave = 1
+    end
+  end
+  return
+
+/* ------------------------------------------------------- scoped commands */
+scbegin: procedure = .void
+  arg s = .int, defall = .int
+  a = needarea()
+  sc_a = a
+  sc_lim = -1
+  sc_single = 0
+  sc_done = 0
+  sc_for = nb[s]
+  sc_while = nc[s]
+  if ctl <> 0 then do
+    sc_done = 1
+    return
+  end
+  k = nf[s]
+  if k = 0 & sc_for > 0 then k = 1
+  if k = 0 & defall = 1 then k = 1
+  if k = 0 then sc_single = 1
+  else if k = 1 then call dbgotop a
+  else if k = 2 then sc_lim = evint(nd[s], 0)
+  else if k = 3 then do
+    call dbgoto a, evint(nd[s], 0)
+    sc_single = 1
+  end
+  return
+
+scskip: procedure = .void
+  if sc_single = 1 then do
+    sc_done = 1
+    return
+  end
+  if sc_lim > 0 then sc_lim = sc_lim - 1
+  call dbskip sc_a, 1
+  return
+
+scnext: procedure = .int
+  do forever
+    if sc_done = 1 then return 0
+    if wa_eof[sc_a] = 1 then return 0
+    if sc_lim = 0 then return 0
+    if sc_while > 0 then do
+      if condval(sc_while) = 0 then return 0
+      if ctl <> 0 then return 0
+    end
+    if sc_for > 0 then do
+      if condval(sc_for) = 0 then do
+        if ctl <> 0 then return 0
+        call scskip
+        iterate
+      end
+    end
+    return 1
+  end
+  return 0
+
+execscoped: procedure = .void
+  arg s = .int
+  cmd = na[s]
+  hold = ne[s]
+  if cmd = C_LIST | cmd = C_DISPLAY then do
+    if nf[hold] = 1 then do
+      call dostructure
+      return
+    end
+    call dolist s, hold
+    return
+  end
+  if cmd = C_LOCATE then do
+    call scbegin s, 1
+    a = sc_a
+    if ctl <> 0 then return
+    wa_locfor[a] = nb[s]
+    wa_locwhile[a] = nc[s]
+    wa_found[a] = 0
+    do while scnext() = 1
+      wa_found[a] = 1
+      return
+    end
+    wa_found[a] = 0
+    return
+  end
+  if cmd = C_COPY then do
+    call docopy s, hold
+    return
+  end
+  if cmd = C_TOTAL then do
+    junk = rterr('BASE', 1001, 'Command TOTAL is not supported', '')
+    return
+  end
+  if cmd = C_DELETE | cmd = C_RECALL | cmd = C_REPLACE | cmd = C_COUNT | cmd = C_SUM | cmd = C_AVERAGE then do
+    defall = 0
+    if cmd = C_COUNT | cmd = C_SUM | cmd = C_AVERAGE then defall = 1
+    call scbegin s, defall
+    if ctl <> 0 then return
+    a = sc_a
+    cnt = 0
+    nsum = 0
+    sums = .float[]
+    decs = .int[]
+    if cmd = C_SUM | cmd = C_AVERAGE then do
+      nsum = nc[hold]
+      do i = 1 to nsum + 1
+        sums[i] = 0.0
+        decs[i] = 0
+      end
+    end
+    do while scnext() = 1
+      cnt = cnt + 1
+      if cmd = C_DELETE then call dbdelete a, 1
+      else if cmd = C_RECALL then call dbdelete a, 0
+      else if cmd = C_REPLACE then do
+        f = na[hold]
+        do while f > 0
+          v = nx[f]
+          nxt = nx[v]
+          val = evalnode(v)
+          if ctl <> 0 then return
+          call assignto f, val
+          if ctl <> 0 then return
+          f = nxt
+        end
+      end
+      else if cmd = C_SUM | cmd = C_AVERAGE then do
+        e = na[hold]
+        i = 0
+        do while e > 0
+          i = i + 1
+          val = evalnode(e)
+          if ctl <> 0 then return
+          if isnum(val) = 1 then do
+            sums[i] = sums[i] + numval(val)
+            if val > 2 then do
+              dd = cint[val] % 256
+              if dd > decs[i] then decs[i] = dd
+            end
+          end
+          e = nx[e]
+        end
+      end
+      call scskip
+    end
+    if cmd = C_COUNT then do
+      if na[hold] > 0 then call assignnew na[hold], mkint(cnt)
+    end
+    if cmd = C_SUM | cmd = C_AVERAGE then do
+      t = nb[hold]
+      i = 0
+      do while t > 0
+        i = i + 1
+        x = sums[i]
+        if cmd = C_AVERAGE & cnt > 0 then x = x / cnt
+        d = decs[i]
+        if cmd = C_AVERAGE & d < setdec then d = setdec
+        call assignnew t, mknum(x, 15 + d, d)
+        t = nx[t]
+      end
+    end
+    return
+  end
+  return
+
+docontinue: procedure = .void
+  a = needarea()
+  if ctl <> 0 then return
+  fnode = wa_locfor[a]
+  if fnode = 0 & wa_locwhile[a] = 0 then do
+    junk = rterr('DBFNTX', 1004, 'CONTINUE without LOCATE', '')
+    return
+  end
+  sc_a = a
+  sc_lim = -1
+  sc_single = 0
+  sc_done = 0
+  sc_for = fnode
+  sc_while = wa_locwhile[a]
+  call dbskip a, 1
+  if scnext() = 1 then wa_found[a] = 1
+  else wa_found[a] = 0
+  return
+
+dolist: procedure = .void
+  arg s = .int, hold = .int
+  call scbegin s, 1
+  if ctl <> 0 then return
+  if nf[s] = 0 & nb[s] = 0 & na[s] = C_DISPLAY then sc_single = 1
+  a = sc_a
+  if na[s] = C_DISPLAY & nf[s] = 0 & nb[s] = 0 then sc_single = 1
+  off = nd[hold]
+  do while scnext() = 1
+    line = ''
+    if off = 0 then line = padleft(wa_recno[a] || '', 7) || ' '
+    if isdeleted(a) = 1 then line = line || '*'
+    e = na[hold]
+    if e = 0 then do
+      do f = 1 to wa_nfld[a]
+        if f > 1 then line = line || ' '
+        line = line || valstr(fieldval(a, f))
+      end
+    end
+    else do
+      first = 1
+      do while e > 0
+        v = evalnode(e)
+        if ctl <> 0 then return
+        if first = 0 then line = line || ' '
+        line = line || valstr(v)
+        first = 0
+        e = nx[e]
+      end
+    end
+    if outstarted = 1 then call emitnl
+    call emit line
+    call scskip
+  end
+  return
+
+dostructure: procedure = .void
+  a = needarea()
+  if ctl <> 0 then return
+  if outstarted = 1 then call emitnl
+  call emit 'Structure for database: ' || wa_file[a]
+  call emitnl
+  call emit 'Number of data records: ' || padleft(wa_nrec[a] || '', 7)
+  call emitnl
+  call emit 'Field  Field Name  Type       Width    Dec'
+  total = 1
+  base = (a - 1) * 256
+  do f = 1 to wa_nfld[a]
+    tn = 'Character'
+    t = ftyp[base + f]
+    if t == 'N' then tn = 'Numeric'
+    if t == 'F' then tn = 'Float'
+    if t == 'D' then tn = 'Date'
+    if t == 'L' then tn = 'Logical'
+    if t == 'M' then tn = 'Memo'
+    dd = ''
+    if t == 'N' | t == 'F' then dd = padleft(fdec[base + f] || '', 3)
+    call emitnl
+    call emit padleft(f || '', 5) || '  ' || left(fnam[base + f], 10) || '  ' || left(tn, 9) || padleft(flen[base + f] || '', 7) || '    ' || dd
+    total = total + flen[base + f]
+  end
+  call emitnl
+  call emit '** Total **' || padleft(total || '', 21)
+  return
+
+docopy: procedure = .void
+  arg s = .int, hold = .int
+  a = needarea()
+  if ctl <> 0 then return
+  f = evstr(nb[hold])
+  if ctl <> 0 then return
+  base = (a - 1) * 256
+  stru = mkarray(0)
+  do i = 1 to wa_nfld[a]
+    e = mkarray(0)
+    call arrpush e, mkstr(fnam[base + i])
+    call arrpush e, mkstr(ftyp[base + i])
+    call arrpush e, mkint(flen[base + i])
+    call arrpush e, mkint(fdec[base + i])
+    call arrpush stru, e
+  end
+  junk = createdbf(f, stru)
+  if nf[hold] = 1 then return
+  t = findfreearea()
+  if t = 0 then return
+  al = '$COPY' || t
+  if openarea(t, f, al, 0) = 0 then return
+  call scbegin s, 1
+  do while scnext() = 1
+    n = wa_nrec[t] + 1
+    recs[ridx(t, n)] = recs[ridx(a, wa_recno[a])]
+    wa_nrec[t] = n
+    call scskip
+  end
+  wa_dirty[t] = 1
+  call closearea t
+  return
+
+doappendfrom: procedure = .void
+  arg s = .int
+  a = needarea()
+  f = evstr(nb[s])
+  if ctl <> 0 then return
+  t = findfreearea()
+  if t = 0 then return
+  if openarea(t, f, '$APPEND' || t, 1) = 0 then return
+  basea = (a - 1) * 256
+  baset = (t - 1) * 256
+  do r = 1 to wa_nrec[t]
+    wa_recno[t] = r
+    wa_eof[t] = 0
+    ok = 1
+    if nd[s] > 0 then do
+      old = curarea
+      curarea = t
+      ok = condval(nd[s])
+      curarea = old
+    end
+    if ok = 1 then do
+      call dbappend a
+      do i = 1 to wa_nfld[a]
+        j = fieldfind(t, fsym[basea + i])
+        if j > 0 then do
+          if ftyp[baset + j] == ftyp[basea + i] then call fieldput a, i, fieldval(t, j)
+        end
+      end
+    end
+  end
+  call closearea t
+  return
+
+/* ---------------------------------------------------------- @ SAY / GET */
+atpos: procedure = .void
+  arg r = .int, c = .int
+  if outstarted = 1 then do
+    if r <> atrow | c < outcol then do
+      if outcol > 0 then call emitnl
+    end
+  end
+  if c > outcol then call emit copies(' ', c - outcol)
+  atrow = r
+  return
+
+execsayget: procedure = .void
+  arg s = .int
+  hold = nf[s]
+  r = evint(na[s], 0)
+  c = evint(nb[s], 0)
+  if ctl <> 0 then return
+  call atpos r, c
+  if nc[s] > 0 then do
+    v = evalnode(nc[s])
+    if ctl <> 0 then return
+    txt = valstr(v)
+    if na[hold] > 0 then txt = xtransform(v, evstr(na[hold]))
+    call emit txt
+  end
+  if nd[s] > 0 then do
+    ngets = ngets + 1
+    gt_node[ngets] = nd[s]
+    gt_pic[ngets] = nb[hold]
+    gt_valid[ngets] = nc[hold]
+    gt_when[ngets] = nd[hold]
+    v = evalnode(nd[s])
+    if ctl <> 0 then return
+    txt = valstr(v)
+    if nb[hold] > 0 then txt = xtransform(v, evstr(nb[hold]))
+    call emit '[' || txt || ']'
+  end
+  return
+
+/* READ: one input line per pending GET; an empty line keeps the value */
+doread: procedure = .void
+  do g = 1 to ngets
+    nd2 = gt_node[g]
+    if gt_when[g] > 0 then do
+      if condval(gt_when[g]) = 0 then iterate
+    end
+    old = evalnode(nd2)
+    if ctl <> 0 then return
+    do forever
+      line = readcon()
+      if ineof = 1 then leave
+      if gt_pic[g] > 0 then do
+        if pos('!', evstr(gt_pic[g])) > 0 then line = upper(line)
+      end
+      nv = old
+      if line <> '' | isstr(old) = 1 then do
+        if isstr(old) = 1 then do
+          if line == '' then nv = old
+          else do
+            w = length(cstr[old])
+            if length(line) >= w then nv = mkstr(left(line, w))
+            else nv = mkstr(line || copies(' ', w - length(line)))
+          end
+        end
+        else if isnum(old) = 1 then nv = valnum(line)
+        else if isdate(old) = 1 then nv = mkdate(parsedate(strip(line), setdatefmt))
+        else if islog(old) = 1 then do
+          u = upper(left(strip(line), 1))
+          if u == 'Y' | u == 'T' then nv = 2
+          else nv = 1
+        end
+      end
+      if isnum(old) = 1 & isnum(nv) = 1 & old > 2 then do
+        /* keep the width and decimals of the original */
+        nv = mknum(numval(nv), cint[old] / 256, cint[old] % 256)
+      end
+      call assignto nd2, nv
+      if ctl <> 0 then return
+      if gt_valid[g] > 0 then do
+        if condval(gt_valid[g]) = 0 then do
+          call emitnl
+          call emit 'Invalid entry, re-enter: '
+          iterate
+        end
+      end
+      leave
+    end
+    call emitnl
+  end
+  ngets = 0
+  return
+
+/* a work area given as number or alias value */
+areaarg: procedure = .int
+  arg v = .int
+  if isnum(v) = 1 then return toint(numval(v))
+  if isstr(v) = 1 then return aliasarea(upper(strip(cstr[v])))
+  return 0
+
+/* assignment target of STORE, COUNT TO, ACCEPT TO ...: a new variable becomes PRIVATE */
+assignnew: procedure = .void
+  arg n = .int, val = .int
+  if nt[n] = K_IDENT | nt[n] = K_MEMVAR then do
+    sym = na[n]
+    if smvd[sym] = 0 then do
+      isfld = 0
+      if curarea > 0 then do
+        if fieldfind(curarea, sym) > 0 then isfld = 1
+      end
+      if isfld = 0 then do
+        call pushprivate sym
+        smv[sym] = val
+        smvd[sym] = 1
+        return
+      end
+    end
+  end
+  call assignto n, val
+  return

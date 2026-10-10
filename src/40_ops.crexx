@@ -1,0 +1,638 @@
+/* ===================================================================== */
+/*               ARITHMETIC, COMPARISON, CONVERSION, DATES               */
+/* ===================================================================== */
+gy = 0
+gm = 0
+gd = 0
+
+jdn2ymd: procedure = .void
+  arg j = .int
+  a = j + 32044
+  b = (4 * a + 3) / 146097
+  c = a - 146097 * b / 4
+  d = (4 * c + 3) / 1461
+  e = c - 1461 * d / 4
+  m = (5 * e + 2) / 153
+  gd = e - (153 * m + 2) / 5 + 1
+  gm = m + 3 - 12 * (m / 10)
+  gy = 100 * b + d - 4800 + m / 10
+  return
+
+pad2: procedure = .string
+  arg n = .int
+  if n < 10 then return '0' || n
+  return n || ''
+
+pad4: procedure = .string
+  arg n = .int
+  s = n || ''
+  do while length(s) < 4
+    s = '0' || s
+  end
+  return s
+
+/* format a date using the given format (mm/dd/yy style) */
+datefmt: procedure = .string
+  arg j = .int, fmt = .string
+  if j = 0 then do
+    r = ''
+    u = upper(fmt)
+    i = 1
+    do while i <= length(u)
+      c = substr(u, i, 1)
+      if c = 'Y' | c = 'M' | c = 'D' then r = r || ' '
+      else r = r || substr(fmt, i, 1)
+      i = i + 1
+    end
+    return r
+  end
+  call jdn2ymd j
+  u = upper(fmt)
+  r = ''
+  i = 1
+  n = length(u)
+  do while i <= n
+    if substr(u, i, 4) == 'YYYY' then do
+      r = r || pad4(gy)
+      i = i + 4
+    end
+    else if substr(u, i, 2) == 'YY' then do
+      if setcentury = 1 then r = r || pad4(gy)
+      else r = r || pad2(gy % 100)
+      i = i + 2
+    end
+    else if substr(u, i, 2) == 'MM' then do
+      r = r || pad2(gm)
+      i = i + 2
+    end
+    else if substr(u, i, 2) == 'DD' then do
+      r = r || pad2(gd)
+      i = i + 2
+    end
+    else do
+      r = r || substr(fmt, i, 1)
+      i = i + 1
+    end
+  end
+  return r
+
+datestr: procedure = .string
+  arg j = .int
+  return datefmt(j, setdatefmt)
+
+dtos: procedure = .string
+  arg j = .int
+  if j = 0 then return '        '
+  call jdn2ymd j
+  return pad4(gy) || pad2(gm) || pad2(gd)
+
+/* parse a date string according to a format; returns a jdn, 0 if empty/invalid */
+parsedate: procedure = .int
+  arg s = .string, fmt = .string
+  u = upper(fmt)
+  /* order of the fields in the format */
+  ord = ''
+  i = 1
+  do while i <= length(u)
+    if substr(u, i, 4) == 'YYYY' then do
+      ord = ord || 'Y'
+      i = i + 4
+    end
+    else if substr(u, i, 2) == 'YY' then do
+      ord = ord || 'y'
+      i = i + 2
+    end
+    else if substr(u, i, 2) == 'MM' then do
+      ord = ord || 'M'
+      i = i + 2
+    end
+    else if substr(u, i, 2) == 'DD' then do
+      ord = ord || 'D'
+      i = i + 2
+    end
+    else i = i + 1
+  end
+  nums = .int[]
+  lens = .int[]
+  cnt = 0
+  i = 1
+  n = length(s)
+  do while i <= n
+    c = substr(s, i, 1)
+    if isdigitc(c) = 1 then do
+      j = i
+      do while j <= n
+        if isdigitc(substr(s, j, 1)) = 0 then leave
+        j = j + 1
+      end
+      cnt = cnt + 1
+      nums[cnt] = substr(s, i, j - i) as .int
+      lens[cnt] = j - i
+      i = j
+    end
+    else i = i + 1
+  end
+  if cnt < 3 then return 0
+  y = 0
+  m = 0
+  d = 0
+  do k = 1 to 3
+    f = substr(ord, k, 1)
+    if f == 'Y' then y = nums[k]
+    else if f == 'y' then do
+      y = nums[k]
+      if lens[k] <= 2 then do
+        cen = setepoch - setepoch % 100
+        y = cen + y
+        if y < setepoch then y = y + 100
+      end
+    end
+    else if f == 'M' then m = nums[k]
+    else if f == 'D' then d = nums[k]
+  end
+  if m < 1 | m > 12 | d < 1 | d > 31 then return 0
+  j = ymd2jdn(y, m, d)
+  call jdn2ymd j
+  if gd <> d | gm <> m then return 0
+  return j
+
+/* ------------------------------------------------------------------ errors */
+argerr: procedure = .int
+  arg op = .string
+  junk = rterr('BASE', 1066, 'Argument error', op)
+  return 0
+
+/* ---------------------------------------------------------------- numbers */
+/* left padding */
+padleft: procedure = .string
+  arg s = .string, w = .int
+  if length(s) >= w then return s
+  return copies(' ', w - length(s)) || s
+
+/* digits of a float with d decimals */
+fmtfloat: procedure = .string
+  arg x = .float, d = .int
+  s = format(x, , d)
+  /* avoid a negative zero */
+  if left(s, 1) = '-' then do
+    ok = 0
+    do i = 2 to length(s)
+      ch = substr(s, i, 1)
+      if ch <> '0' & ch <> '.' then do
+        ok = 1
+        leave
+      end
+    end
+    if ok = 0 then s = substr(s, 2)
+  end
+  return s
+
+/* the display string of a number: width and decimals taken from the value */
+numstr: procedure = .string
+  arg v = .int
+  if v < 0 then return padleft(intval(v) || '', 10)
+  w = cint[v] / 256
+  d = cint[v] % 256
+  s = fmtfloat(cnum[v], d)
+  return padleft(s, w)
+
+/* Str(n, len, dec): -1 means "not given" */
+numstrw: procedure = .string
+  arg v = .int, w = .int, d = .int
+  if w < 0 then do
+    w = numwid(v)
+    if d < 0 then d = numdec(v)
+  end
+  if d < 0 then d = 0
+  x = numval(v)
+  s = fmtfloat(x, d)
+  if length(s) > w then do
+    /* try dropping decimals */
+    return copies('*', w)
+  end
+  return padleft(s, w)
+
+/* trimmed number, for concatenation, e.g. hb_NtoS */
+ntos: procedure = .string
+  arg v = .int
+  if v < 0 then return intval(v) || ''
+  return fmtfloat(cnum[v], cint[v] % 256)
+
+/* value of a number cell with decimals d */
+mknumd: procedure = .int
+  arg x = .float, d = .int
+  return mknum(x, 10, d)
+
+numadd: procedure = .int
+  arg a = .int, b = .int
+  if a < 0 & b < 0 then return mkint(intval(a) + intval(b))
+  x = numval(a) + numval(b)
+  d = numdec(a)
+  if numdec(b) > d then d = numdec(b)
+  return mknum(x, 10, d)
+
+numsub: procedure = .int
+  arg a = .int, b = .int
+  if a < 0 & b < 0 then return mkint(intval(a) - intval(b))
+  x = numval(a) - numval(b)
+  d = numdec(a)
+  if numdec(b) > d then d = numdec(b)
+  return mknum(x, 10, d)
+
+nummul: procedure = .int
+  arg a = .int, b = .int
+  if a < 0 & b < 0 then do
+    ia = intval(a)
+    ib = intval(b)
+    f = (ia * 1.0) * (ib * 1.0)
+    if f < 9.0e18 & f > -9.0e18 then return mkint(ia * ib)
+    return mknum(f, 20, 0)
+  end
+  x = numval(a) * numval(b)
+  d = numdec(a) + numdec(b)
+  return mknum(x, 10, d)
+
+numdiv: procedure = .int
+  arg a = .int, b = .int
+  y = numval(b)
+  if y = 0.0 then do
+    junk = rterr('BASE', 1340, 'Zero divisor', '/')
+    return 0
+  end
+  return mknum(numval(a) / y, 10, setdec)
+
+nummod: procedure = .int
+  arg a = .int, b = .int
+  if a < 0 & b < 0 then do
+    ib = intval(b)
+    if ib = 0 then do
+      junk = rterr('BASE', 1341, 'Zero divisor', '%')
+      return 0
+    end
+    return mkint(intval(a) % ib)
+  end
+  y = numval(b)
+  if y = 0.0 then do
+    junk = rterr('BASE', 1341, 'Zero divisor', '%')
+    return 0
+  end
+  x = numval(a)
+  q = toint(x / y)
+  r = x - (q * 1.0) * y
+  d = numdec(a)
+  if numdec(b) > d then d = numdec(b)
+  return mknum(r, 10, d)
+
+fpow: procedure = .float
+  arg x = .float, y = .float
+  if y = 0.0 then return 1.0
+  if x = 0.0 then return 0.0
+  yi = trunc(y) as .int
+  if yi * 1.0 = y then do
+    neg = 0
+    e = yi
+    if e < 0 then do
+      neg = 1
+      e = 0 - e
+    end
+    r = 1.0
+    bb = x
+    do while e > 0
+      if e % 2 = 1 then r = r * bb
+      bb = bb * bb
+      e = e / 2
+    end
+    if neg = 1 then r = 1.0 / r
+    return r
+  end
+  if x < 0.0 then return 0.0
+  return lexp(y * lln(x))
+
+numpow: procedure = .int
+  arg a = .int, b = .int
+  x = numval(a)
+  y = numval(b)
+  return mknum(fpow(x, y), 10, setdec)
+
+numneg: procedure = .int
+  arg a = .int
+  if a < 0 then return mkint(0 - intval(a))
+  c = newcell(T_NUM)
+  cnum[c] = 0.0 - cnum[a]
+  cint[c] = cint[a]
+  return c
+
+/* ----------------------------------------------------------- comparison */
+/* -1, 0, 1 for two strings, byte-wise; shorter string is lower */
+strcmp: procedure = .int
+  arg a = .string, b = .string
+  p = compare(a, b, '00'x)
+  if p = 0 then return 0
+  ca = -1
+  cb = -1
+  if p <= length(a) then ca = c2d(substr(a, p, 1))
+  if p <= length(b) then cb = c2d(substr(b, p, 1))
+  if ca < cb then return -1
+  return 1
+
+/* order of two values; returns 2 if they cannot be compared */
+cmpv: procedure = .int
+  arg a = .int, b = .int
+  if a < 0 & b < 0 then do
+    x = intval(a)
+    y = intval(b)
+    if x < y then return -1
+    if x > y then return 1
+    return 0
+  end
+  if isnum(a) = 1 & isnum(b) = 1 then do
+    x = numval(a)
+    y = numval(b)
+    if x < y then return -1
+    if x > y then return 1
+    return 0
+  end
+  if a > 2 & b > 2 then do
+    if ctag[a] = T_STR & ctag[b] = T_STR then return strcmp(cstr[a], cstr[b])
+    if ctag[a] = T_DATE & ctag[b] = T_DATE then do
+      if cint[a] < cint[b] then return -1
+      if cint[a] > cint[b] then return 1
+      return 0
+    end
+  end
+  if islog(a) = 1 & islog(b) = 1 then do
+    if a < b then return -1
+    if a > b then return 1
+    return 0
+  end
+  return 2
+
+/* the = operator */
+equalv: procedure = .int
+  arg a = .int, b = .int
+  if a = 0 & b = 0 then return 1
+  if a = 0 | b = 0 then return 0
+  if isstr(a) = 1 & isstr(b) = 1 then do
+    if setexact = 1 then do
+      if strip(cstr[a], 'T') == strip(cstr[b], 'T') then return 1
+      return 0
+    end
+    s = cstr[a]
+    t = cstr[b]
+    if t == '' then return 1
+    if left(s, length(t)) == t then return 1
+    return 0
+  end
+  r = cmpv(a, b)
+  if r = 2 then do
+    if isarr(a) = 1 & isarr(b) = 1 then do
+      if a = b then return 1
+      return 0
+    end
+    if (ishash(a) = 1 & ishash(b) = 1) | (isobj(a) = 1 & isobj(b) = 1) | (isblk(a) = 1 & isblk(b) = 1) then do
+      if a = b then return 1
+      return 0
+    end
+    junk = argerr('=')
+    return 0
+  end
+  if r = 0 then return 1
+  return 0
+
+/* the == operator */
+exactv: procedure = .int
+  arg a = .int, b = .int
+  if a = 0 & b = 0 then return 1
+  if a = 0 | b = 0 then return 0
+  if isstr(a) = 1 & isstr(b) = 1 then do
+    if cstr[a] == cstr[b] then return 1
+    return 0
+  end
+  r = cmpv(a, b)
+  if r = 2 then do
+    if a = b then return 1
+    if isarr(a) = 1 | ishash(a) = 1 | isobj(a) = 1 | isblk(a) = 1 then return 0
+    junk = argerr('==')
+    return 0
+  end
+  if r = 0 then return 1
+  return 0
+
+/* ----------------------------------------------------------- operators */
+binadd: procedure = .int
+  arg a = .int, b = .int
+  if isnum(a) = 1 & isnum(b) = 1 then return numadd(a, b)
+  if isstr(a) = 1 & isstr(b) = 1 then return mkstr(cstr[a] || cstr[b])
+  if isdate(a) = 1 & isnum(b) = 1 then return mkdate(cint[a] + toint(numval(b)))
+  if isnum(a) = 1 & isdate(b) = 1 then return mkdate(cint[b] + toint(numval(a)))
+  junk = argerr('+')
+  return 0
+
+binsub: procedure = .int
+  arg a = .int, b = .int
+  if isnum(a) = 1 & isnum(b) = 1 then return numsub(a, b)
+  if isstr(a) = 1 & isstr(b) = 1 then do
+    s = cstr[a]
+    t = strip(s, 'T')
+    return mkstr(t || cstr[b] || copies(' ', length(s) - length(t)))
+  end
+  if isdate(a) = 1 & isnum(b) = 1 then return mkdate(cint[a] - toint(numval(b)))
+  if isdate(a) = 1 & isdate(b) = 1 then return mkint(cint[a] - cint[b])
+  junk = argerr('-')
+  return 0
+
+binop: procedure = .int
+  arg t = .int, a = .int, b = .int
+  if t = K_ADD then return binadd(a, b)
+  if t = K_SUB then return binsub(a, b)
+  if t = K_MUL then do
+    if isnum(a) = 1 & isnum(b) = 1 then return nummul(a, b)
+    return argerr('*')
+  end
+  if t = K_DIV then do
+    if isnum(a) = 1 & isnum(b) = 1 then return numdiv(a, b)
+    return argerr('/')
+  end
+  if t = K_MOD then do
+    if isnum(a) = 1 & isnum(b) = 1 then return nummod(a, b)
+    return argerr('%')
+  end
+  if t = K_POW then do
+    if isnum(a) = 1 & isnum(b) = 1 then return numpow(a, b)
+    return argerr('^')
+  end
+  return 0
+
+/* relational operators */
+relop: procedure = .int
+  arg t = .int, a = .int, b = .int
+  if t = K_EQ then return mklog(equalv(a, b))
+  if t = K_EXEQ then return mklog(exactv(a, b))
+  if t = K_NE then do
+    if equalv(a, b) = 1 then return 1
+    return 2
+  end
+  r = cmpv(a, b)
+  if r = 2 then do
+    if t = K_LT then return argerr('<')
+    if t = K_LE then return argerr('<=')
+    if t = K_GT then return argerr('>')
+    return argerr('>=')
+  end
+  if t = K_LT then do
+    if r < 0 then return 2
+    return 1
+  end
+  if t = K_LE then do
+    if r <= 0 then return 2
+    return 1
+  end
+  if t = K_GT then do
+    if r > 0 then return 2
+    return 1
+  end
+  if r >= 0 then return 2
+  return 1
+
+/* ------------------------------------------------------ value to string */
+typech: procedure = .string
+  arg v = .int
+  if v = 0 then return 'U'
+  if v < 0 then return 'N'
+  if v = 1 | v = 2 then return 'L'
+  t = ctag[v]
+  if t = T_NUM then return 'N'
+  if t = T_STR then return 'C'
+  if t = T_DATE then return 'D'
+  if t = T_ARR then return 'A'
+  if t = T_HASH then return 'H'
+  if t = T_BLK then return 'B'
+  if t = T_OBJ then return 'O'
+  return 'U'
+
+/* string for ? and ?? */
+valstr: procedure = .string
+  arg v = .int
+  if v = 0 then return 'NIL'
+  if v < 0 then return numstr(v)
+  if v = 1 then return '.F.'
+  if v = 2 then return '.T.'
+  t = ctag[v]
+  if t = T_STR then return cstr[v]
+  if t = T_NUM then return numstr(v)
+  if t = T_DATE then return datestr(cint[v])
+  junk = argerr('?')
+  return ''
+
+/* string for hb_ValToStr / conversions in messages (never raises) */
+vtostr: procedure = .string
+  arg v = .int
+  if v = 0 then return 'NIL'
+  if v < 0 then return intval(v) || ''
+  if v = 1 then return '.F.'
+  if v = 2 then return '.T.'
+  t = ctag[v]
+  if t = T_STR then return cstr[v]
+  if t = T_NUM then return ntos(v)
+  if t = T_DATE then return datestr(cint[v])
+  if t = T_ARR then return '{Array of ' || arrlen(v) || ' items}'
+  if t = T_HASH then return '{Hash of ' || hashlen(v) || ' items}'
+  if t = T_BLK then return '{|| ... }'
+  if t = T_OBJ then return clname[cint[v]] || ' Object'
+  return 'NIL'
+
+/* ---------------------------------------------------- math (from Lisp) */
+lsqrt: procedure = .float
+  arg x = .float
+  if x <= 0.0 then return 0.0
+  m = x
+  e = 0
+  do while m >= 4.0
+    m = m / 4.0
+    e = e + 1
+  end
+  do while m < 0.25
+    m = m * 4.0
+    e = e - 1
+  end
+  r = (1.0 + m) / 2.0
+  do 8
+    r = (r + m / r) / 2.0
+  end
+  do while e > 0
+    r = r * 2.0
+    e = e - 1
+  end
+  do while e < 0
+    r = r / 2.0
+    e = e + 1
+  end
+  return r
+
+lsin: procedure = .float
+  arg x = .float
+  pi = 3.14159265358979323846
+  twopi = 6.28318530717958647692
+  r = x
+  if r > twopi | r < 0.0 - twopi then do
+    q = trunc(r / twopi) as .int
+    r = r - q * twopi
+  end
+  if r > pi then r = r - twopi
+  if r < 0.0 - pi then r = r + twopi
+  if r > pi / 2.0 then r = pi - r
+  if r < 0.0 - pi / 2.0 then r = 0.0 - pi - r
+  r2 = r * r
+  term = r
+  sum = r
+  do k = 1 to 12
+    term = 0.0 - term * r2 / ((2 * k) * (2 * k + 1))
+    sum = sum + term
+  end
+  return sum
+
+lcos: procedure = .float
+  arg x = .float
+  return lsin(x + 1.57079632679489661923)
+
+lln: procedure = .float
+  arg x = .float
+  if x <= 0.0 then return 0.0
+  e = 0
+  m = x
+  do while m >= 2.0
+    m = m / 2.0
+    e = e + 1
+  end
+  do while m < 0.5
+    m = m * 2.0
+    e = e - 1
+  end
+  z = (m - 1.0) / (m + 1.0)
+  z2 = z * z
+  term = z
+  sum = z
+  do k = 1 to 30
+    term = term * z2
+    sum = sum + term / (2 * k + 1)
+  end
+  return 2.0 * sum + e * 0.69314718055994530942
+
+lexp: procedure = .float
+  arg x = .float
+  k = 0
+  r = x
+  do while r > 0.5 | r < -0.5
+    r = r / 2.0
+    k = k + 1
+  end
+  term = 1.0
+  sum = 1.0
+  do i = 1 to 20
+    term = term * r / i
+    sum = sum + term
+  end
+  do k
+    sum = sum * sum
+  end
+  return sum

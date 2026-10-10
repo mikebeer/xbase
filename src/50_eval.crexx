@@ -1,0 +1,732 @@
+/* ===================================================================== */
+/*                           EXPRESSION EVALUATION                        */
+/* ===================================================================== */
+deref: procedure = .int
+  arg v = .int
+  if v > 2 then do
+    if ctag[v] = T_REF then return ca1[v]
+  end
+  return v
+
+/* the reference cell for a variable node, boxing the variable if needed */
+mkref: procedure = .int
+  arg n = .int
+  t = nt[n]
+  if t = K_LOCAL then do
+    idx = fbase + na[n]
+    v = fv[idx]
+    if v > 2 then do
+      if ctag[v] = T_REF then return v
+    end
+    r = newcell(T_REF)
+    ca1[r] = v
+    fv[idx] = r
+    return r
+  end
+  if t = K_CAPV then return vdat[curcap + na[n] - 1]
+  if t = K_STATIC then do
+    idx = na[n]
+    v = sv[idx]
+    if v > 2 then do
+      if ctag[v] = T_REF then return v
+    end
+    r = newcell(T_REF)
+    ca1[r] = v
+    sv[idx] = r
+    return r
+  end
+  if t = K_IDENT | t = K_MEMVAR then do
+    sym = na[n]
+    if smvd[sym] = 0 then do
+      junk = rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+      return 0
+    end
+    v = smv[sym]
+    if v > 2 then do
+      if ctag[v] = T_REF then return v
+    end
+    r = newcell(T_REF)
+    ca1[r] = v
+    smv[sym] = r
+    return r
+  end
+  /* anything else: pass the value */
+  return evalnode(n)
+
+/* ------------------------------------------------------------ variables */
+getmemvar: procedure = .int
+  arg sym = .int
+  v = smv[sym]
+  if v > 2 then do
+    if ctag[v] = T_REF then return ca1[v]
+  end
+  return v
+
+setmemvar: procedure = .void
+  arg sym = .int, val = .int
+  v = smv[sym]
+  if v > 2 then do
+    if ctag[v] = T_REF then do
+      ca1[v] = val
+      return
+    end
+  end
+  smv[sym] = val
+  smvd[sym] = 1
+  return
+
+/* value of an undeclared identifier: memvar, else field */
+getident: procedure = .int
+  arg sym = .int
+  if smvd[sym] = 1 then return getmemvar(sym)
+  if curarea > 0 then do
+    fi = fieldfind(curarea, sym)
+    if fi > 0 then return fieldval(curarea, fi)
+  end
+  return rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+
+/* resolve an alias node (constant string / number / expression) to a work area */
+resolvealias: procedure = .int
+  arg an = .int
+  if nt[an] = K_CONST then do
+    v = na[an]
+    if isstr(v) = 1 then do
+      a = aliasarea(upper(strip(cstr[v])))
+      if a = 0 then junk = rterr('BASE', 1002, 'Alias does not exist', upper(cstr[v]))
+      return a
+    end
+  end
+  v = evalnode(an)
+  if ctl <> 0 then return 0
+  if isnum(v) = 1 then return toint(numval(v))
+  if isstr(v) = 1 then do
+    a = aliasarea(upper(strip(cstr[v])))
+    if a = 0 then junk = rterr('BASE', 1002, 'Alias does not exist', upper(cstr[v]))
+    return a
+  end
+  junk = rterr('BASE', 1002, 'Alias does not exist', '')
+  return 0
+
+/* ----------------------------------------------------------------- eval */
+evalnode: procedure = .int
+  arg n = .int
+  t = nt[n]
+  if t = K_CONST then return na[n]
+  if t = K_LOCAL then do
+    v = fv[fbase + na[n]]
+    if v > 2 then do
+      if ctag[v] = T_REF then return ca1[v]
+    end
+    return v
+  end
+  if t = K_CALL then return evcall(n)
+  if t = K_ADD then do
+    a = evalnode(na[n])
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if a < 0 & b < 0 then return mkint(intval(a) + intval(b))
+    return binadd(a, b)
+  end
+  if t = K_SUB then do
+    a = evalnode(na[n])
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if a < 0 & b < 0 then return mkint(intval(a) - intval(b))
+    return binsub(a, b)
+  end
+  if t = K_IN then do
+    a = evalnode(na[n])
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if isstr(a) = 0 | isstr(b) = 0 then return rterr('BASE', 1109, 'Argument error', '$')
+    if pos(cstr[a], cstr[b]) > 0 | cstr[a] == '' then return 2
+    return 1
+  end
+  if t = K_EQ | t = K_EXEQ | t = K_NE | t = K_LT | t = K_LE | t = K_GT | t = K_GE then do
+    a = evalnode(na[n])
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if a < 0 & b < 0 then do
+      x = intval(a)
+      y = intval(b)
+      if t = K_EQ | t = K_EXEQ then do
+        if x = y then return 2
+        return 1
+      end
+      if t = K_NE then do
+        if x <> y then return 2
+        return 1
+      end
+      if t = K_LT then do
+        if x < y then return 2
+        return 1
+      end
+      if t = K_LE then do
+        if x <= y then return 2
+        return 1
+      end
+      if t = K_GT then do
+        if x > y then return 2
+        return 1
+      end
+      if x >= y then return 2
+      return 1
+    end
+    return relop(t, a, b)
+  end
+  if t = K_STATIC then do
+    v = sv[na[n]]
+    if v > 2 then do
+      if ctag[v] = T_REF then return ca1[v]
+    end
+    return v
+  end
+  if t = K_ASSIGN then do
+    v = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    call assignto na[n], v
+    return v
+  end
+  if t = K_INDEX then return evindex(n)
+  if t = K_AND then do
+    a = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if islog(a) = 0 then return argerr('.AND.')
+    if a = 1 then return 1
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if islog(b) = 0 then return argerr('.AND.')
+    return b
+  end
+  if t = K_OR then do
+    a = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if islog(a) = 0 then return argerr('.OR.')
+    if a = 2 then return 2
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    if islog(b) = 0 then return argerr('.OR.')
+    return b
+  end
+  if t = K_NOT then do
+    a = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if islog(a) = 0 then return argerr('.NOT.')
+    if a = 1 then return 2
+    return 1
+  end
+  if t = K_MUL | t = K_DIV | t = K_MOD | t = K_POW then do
+    a = evalnode(na[n])
+    b = evalnode(nb[n])
+    if ctl <> 0 then return 0
+    return binop(t, a, b)
+  end
+  if t = K_CAPV then return ca1[vdat[curcap + na[n] - 1]]
+  if t = K_IDENT then return getident(na[n])
+  if t = K_PLUS then return evalnode(na[n])
+  if t = K_IIF then do
+    c = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if islog(c) = 0 then return argerr('IIF')
+    if c = 2 then return evalnode(nb[n])
+    return evalnode(nc[n])
+  end
+  if t = K_NEG then do
+    a = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if isnum(a) = 0 then return argerr('-')
+    return numneg(a)
+  end
+  if t = K_PREINC | t = K_PREDEC | t = K_POSTINC | t = K_POSTDEC then do
+    old = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if isnum(old) = 0 & isdate(old) = 0 then return argerr('++')
+    if t = K_PREINC | t = K_POSTINC then nv2 = binadd(old, mkint(1))
+    else nv2 = binsub(old, mkint(1))
+    if ctl <> 0 then return 0
+    call assignto na[n], nv2
+    if t = K_PREINC | t = K_PREDEC then return nv2
+    return old
+  end
+  if t = K_SEND then return evsend(n)
+  if t = K_ARRAY then do
+    cnt = nb[n]
+    arr = mkarray(cnt)
+    e = na[n]
+    i = 0
+    do while e > 0
+      i = i + 1
+      v = evalnode(e)
+      if ctl <> 0 then return 0
+      call arrset arr, i, v
+      e = nx[e]
+    end
+    return arr
+  end
+  if t = K_HASHLIT then do
+    h = mkhash()
+    e = na[n]
+    do while e > 0
+      k = evalnode(e)
+      v = evalnode(nx[e])
+      if ctl <> 0 then return 0
+      call hset h, k, v
+      e = nx[nx[e]]
+    end
+    return h
+  end
+  if t = K_BLOCK then return mkblock(n)
+  if t = K_SELF then return curself
+  if t = K_MEMVAR then do
+    sym = na[n]
+    if smvd[sym] = 0 then return rterr('BASE', 1003, 'Variable does not exist', 'M->' || snm[sym])
+    return getmemvar(sym)
+  end
+  if t = K_FIELDX then do
+    sym = na[n]
+    if curarea > 0 then do
+      fi = fieldfind(curarea, sym)
+      if fi > 0 then return fieldval(curarea, fi)
+    end
+    return rterr('BASE', 1003, 'Variable does not exist', 'FIELD->' || snm[sym])
+  end
+  if t = K_ALIASFLD then do
+    a = resolvealias(na[n])
+    if ctl <> 0 then return 0
+    sym = nb[n]
+    fi = fieldfind(a, sym)
+    if fi = 0 then return rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+    return fieldval(a, fi)
+  end
+  if t = K_ALIASEXPR then do
+    a = resolvealias(na[n])
+    if ctl <> 0 then return 0
+    old = curarea
+    curarea = a
+    v = evalnode(nb[n])
+    curarea = old
+    return v
+  end
+  if t = K_REFX then return mkref(na[n])
+  if t = K_MACRO then do
+    v = evalnode(na[n])
+    if ctl <> 0 then return 0
+    if isstr(v) = 0 then return v
+    return macroeval(cstr[v])
+  end
+  if t = K_CODEBLOCK then do
+    c = newcell(T_BLK)
+    cint[c] = n
+    return c
+  end
+  junk = rterr('BASE', 1066, 'Internal error: unknown expression node', t || '')
+  return 0
+
+evindex: procedure = .int
+  arg n = .int
+  b = evalnode(na[n])
+  i = evalnode(nb[n])
+  if ctl <> 0 then return 0
+  if b > 2 then do
+    t = ctag[b]
+    if t = T_ARR then do
+      if isnum(i) = 0 then return rterr('BASE', 1068, 'Argument error', 'array access')
+      k = toint(numval(i))
+      if k < 1 | k > ca1[b] then return rterr('BASE', 1132, 'Bound error', 'array access')
+      return vdat[cint[b] + k - 1]
+    end
+    if t = T_HASH then do
+      p = hfind(b, i)
+      if p = 0 then return rterr('BASE', 1132, 'Bound error', 'array access')
+      return arrget(ca2[b], p)
+    end
+  end
+  return rterr('BASE', 1068, 'Argument error', 'array access')
+
+mkblock: procedure = .int
+  arg n = .int
+  c = newcell(T_BLK)
+  cint[c] = n
+  cnt = nf[n]
+  ca2[c] = curself
+  if cnt = 0 then do
+    ca1[c] = 0
+    return c
+  end
+  cs = nv + 1
+  nv = nv + cnt
+  s = nd[n]
+  i = 0
+  do while s > 0
+    i = i + 1
+    k = na[s]
+    ix = nb[s]
+    if k = 1 then do
+      idx = fbase + ix
+      v = fv[idx]
+      r = 0
+      if v > 2 then do
+        if ctag[v] = T_REF then r = v
+      end
+      if r = 0 then do
+        r = newcell(T_REF)
+        ca1[r] = v
+        fv[idx] = r
+      end
+      vdat[cs + i - 1] = r
+    end
+    else vdat[cs + i - 1] = vdat[curcap + ix - 1]
+    s = nx[s]
+  end
+  ca1[c] = cs
+  return c
+
+/* ------------------------------------------------------------ assignment */
+assignto: procedure = .void
+  arg n = .int, val = .int
+  t = nt[n]
+  if t = K_LOCAL then do
+    idx = fbase + na[n]
+    v = fv[idx]
+    if v > 2 then do
+      if ctag[v] = T_REF then do
+        ca1[v] = val
+        return
+      end
+    end
+    fv[idx] = val
+    return
+  end
+  if t = K_CAPV then do
+    ca1[vdat[curcap + na[n] - 1]] = val
+    return
+  end
+  if t = K_STATIC then do
+    idx = na[n]
+    v = sv[idx]
+    if v > 2 then do
+      if ctag[v] = T_REF then do
+        ca1[v] = val
+        return
+      end
+    end
+    sv[idx] = val
+    return
+  end
+  if t = K_IDENT then do
+    sym = na[n]
+    if smvd[sym] = 1 then do
+      call setmemvar sym, val
+      return
+    end
+    if curarea > 0 then do
+      fi = fieldfind(curarea, sym)
+      if fi > 0 then do
+        call fieldput curarea, fi, val
+        return
+      end
+    end
+    junk = rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+    return
+  end
+  if t = K_MEMVAR then do
+    sym = na[n]
+    if smvd[sym] = 0 then do
+      junk = rterr('BASE', 1003, 'Variable does not exist', 'M->' || snm[sym])
+      return
+    end
+    call setmemvar sym, val
+    return
+  end
+  if t = K_FIELDX then do
+    sym = na[n]
+    if curarea > 0 then do
+      fi = fieldfind(curarea, sym)
+      if fi > 0 then do
+        call fieldput curarea, fi, val
+        return
+      end
+    end
+    junk = rterr('BASE', 1003, 'Variable does not exist', 'FIELD->' || snm[sym])
+    return
+  end
+  if t = K_ALIASFLD then do
+    a = resolvealias(na[n])
+    if ctl <> 0 then return
+    fi = fieldfind(a, nb[n])
+    if fi = 0 then do
+      junk = rterr('BASE', 1003, 'Variable does not exist', snm[nb[n]])
+      return
+    end
+    call fieldput a, fi, val
+    return
+  end
+  if t = K_INDEX then do
+    b = evalnode(na[n])
+    i = evalnode(nb[n])
+    if ctl <> 0 then return
+    if b > 2 then do
+      tt = ctag[b]
+      if tt = T_ARR then do
+        if isnum(i) = 0 then do
+          junk = rterr('BASE', 1069, 'Argument error', 'array assign')
+          return
+        end
+        k = toint(numval(i))
+        if k < 1 | k > ca1[b] then do
+          junk = rterr('BASE', 1133, 'Bound error', 'array assign')
+          return
+        end
+        vdat[cint[b] + k - 1] = val
+        return
+      end
+      if tt = T_HASH then do
+        call hset b, i, val
+        return
+      end
+    end
+    junk = rterr('BASE', 1069, 'Argument error', 'array assign')
+    return
+  end
+  if t = K_SEND then do
+    call sendassign n, val
+    return
+  end
+  if t = K_MACRO then do
+    v = evalnode(na[n])
+    if isstr(v) = 1 then do
+      sym = intern(upper(strip(cstr[v])))
+      if smvd[sym] = 1 then call setmemvar sym, val
+      else if curarea > 0 then do
+        fi = fieldfind(curarea, sym)
+        if fi > 0 then call fieldput curarea, fi, val
+        else junk = rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+      end
+      else junk = rterr('BASE', 1003, 'Variable does not exist', snm[sym])
+    end
+    return
+  end
+  junk = rterr('BASE', 1066, 'Argument error', 'assignment')
+  return
+
+/* ------------------------------------------------------------ call sites */
+evalargs: procedure = .int
+  /* evaluate argument list into fv[base+1..]; max = slots that can be kept */
+  arg a = .int, base = .int, mx = .int
+  i = 0
+  do while a > 0
+    i = i + 1
+    if i <= mx then do
+      if nt[a] = K_REFX then v = mkref(na[a])
+      else v = evalnode(a)
+      fv[base + i] = v
+    end
+    else junk = evalnode(a)
+    if ctl <> 0 then return 0
+    a = nx[a]
+  end
+  return 1
+
+evcall: procedure = .int
+  arg n = .int
+  sym = na[n]
+  cnt = nc[n]
+  f = sfn[sym]
+  if f > 0 then do
+    base = ftop
+    slots = fnslots[f]
+    if cnt > slots then slots = cnt
+    ftop = base + slots
+    do i = 1 to slots
+      fv[base + i] = 0
+    end
+    ok = evalargs(nb[n], base, fnpar[f])
+    if ctl <> 0 then do
+      ftop = base
+      return 0
+    end
+    return invoke(f, base, cnt, 0, n)
+  end
+  bi = sbi[sym]
+  if bi > 0 then do
+    base = ftop
+    ftop = base + cnt + 8
+    do i = cnt + 1 to cnt + 8
+      fv[base + i] = 0
+    end
+    ok = evalargs(nb[n], base, cnt)
+    if ctl <> 0 then do
+      ftop = base
+      return 0
+    end
+    r = callprim(bi, base, cnt)
+    ftop = base
+    return r
+  end
+  cl = scls[sym]
+  if cl > 0 then do
+    junk = evalargs(nb[n], ftop, 0)
+    return newobject(cl)
+  end
+  return rterr('BASE', 1001, 'Undefined function', snm[sym])
+
+/* run user function f whose arguments are already in fv[base+1..] */
+invoke: procedure = .int
+  arg f = .int, base = .int, cnt = .int, obj = .int, site = .int
+  if pctop > 2400 then do
+    ftop = base
+    return rterr('BASE', 1002, 'Stack overflow', fnname[f])
+  end
+  ofb = fbase
+  opc = fpc
+  osf = curself
+  ocap = curcap
+  omc = curmcls
+  opv = pvtop
+  fbase = base
+  fpc = cnt
+  curself = obj
+  curmcls = fnclass[f]
+  pctop = pctop + 1
+  pcname[pctop] = fnname[f]
+  pcln[pctop] = nl[fnbody[f]]
+  call execstmts fnbody[f]
+  r = 0
+  if ctl = E_RET then do
+    r = retv
+    ctl = 0
+  end
+  else if ctl = E_EXIT | ctl = E_LOOP then ctl = 0
+  do while pvtop > opv
+    s = pvs[pvtop]
+    smv[s] = pvv[pvtop]
+    smvd[s] = pvd[pvtop]
+    pvtop = pvtop - 1
+  end
+  pctop = pctop - 1
+  fbase = ofb
+  fpc = opc
+  curself = osf
+  curcap = ocap
+  curmcls = omc
+  ftop = base
+  return r
+
+/* evaluate a block; arguments in fv[base+1..base+cnt], ftop = base + cnt */
+callblock: procedure = .int
+  arg blk = .int, base = .int, cnt = .int
+  bn = cint[blk]
+  if nt[bn] = K_CODEBLOCK then do
+    sym = na[bn]
+    f = sfn[sym]
+    if f > 0 then do
+      slots = fnslots[f]
+      if cnt > slots then slots = cnt
+      ftop = base + slots
+      do i = cnt + 1 to slots
+        fv[base + i] = 0
+      end
+      return invoke(f, base, cnt, 0, 0)
+    end
+    bi = sbi[sym]
+    if bi > 0 then do
+      ftop = base + cnt + 8
+      do i = cnt + 1 to cnt + 8
+        fv[base + i] = 0
+      end
+      r = callprim(bi, base, cnt)
+      ftop = base
+      return r
+    end
+    ftop = base
+    return rterr('BASE', 1001, 'Undefined function', snm[sym])
+  end
+  np = nb[bn]
+  slots = nc[bn]
+  if cnt > slots then slots = cnt
+  ftop = base + slots
+  do i = cnt + 1 to slots
+    fv[base + i] = 0
+  end
+  ofb = fbase
+  ocap = curcap
+  osf = curself
+  fbase = base
+  curcap = ca1[blk]
+  curself = ca2[blk]
+  e = na[bn]
+  r = 0
+  do while e > 0
+    r = evalnode(e)
+    if ctl <> 0 then leave
+    e = nx[e]
+  end
+  fbase = ofb
+  curcap = ocap
+  curself = osf
+  ftop = base
+  return r
+
+evalblock0: procedure = .int
+  arg blk = .int
+  base = ftop
+  return callblock(blk, base, 0)
+
+evalblock1: procedure = .int
+  arg blk = .int, a = .int
+  base = ftop
+  fv[base + 1] = a
+  ftop = base + 1
+  return callblock(blk, base, 1)
+
+evalblock2: procedure = .int
+  arg blk = .int, a = .int, b = .int
+  base = ftop
+  fv[base + 1] = a
+  fv[base + 2] = b
+  ftop = base + 2
+  return callblock(blk, base, 2)
+
+evalblock3: procedure = .int
+  arg blk = .int, a = .int, b = .int, c = .int
+  base = ftop
+  fv[base + 1] = a
+  fv[base + 2] = b
+  fv[base + 3] = c
+  ftop = base + 3
+  return callblock(blk, base, 3)
+
+/* call a function by symbol with arguments given in an array (used by DO, Eval, etc.) */
+callsym: procedure = .int
+  arg sym = .int, arr = .int
+  cnt = 0
+  if arr > 0 then cnt = arrlen(arr)
+  base = ftop
+  ftop = base + cnt
+  do i = 1 to cnt
+    fv[base + i] = arrget(arr, i)
+  end
+  f = sfn[sym]
+  if f > 0 then do
+    slots = fnslots[f]
+    if cnt > slots then slots = cnt
+    ftop = base + slots
+    do i = cnt + 1 to slots
+      fv[base + i] = 0
+    end
+    return invoke(f, base, cnt, 0, 0)
+  end
+  bi = sbi[sym]
+  if bi > 0 then do
+    ftop = base + cnt + 8
+    do i = cnt + 1 to cnt + 8
+      fv[base + i] = 0
+    end
+    r = callprim(bi, base, cnt)
+    ftop = base
+    return r
+  end
+  ftop = base
+  cl = scls[sym]
+  if cl > 0 then return newobject(cl)
+  return rterr('BASE', 1001, 'Undefined function', snm[sym])

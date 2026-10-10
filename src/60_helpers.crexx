@@ -1,0 +1,271 @@
+/* ===================================================================== */
+/*                        HELPERS FOR THE LIBRARY                        */
+/* ===================================================================== */
+sarg: procedure = .string
+  arg v = .int
+  if isstr(v) = 1 then return cstr[v]
+  return ''
+
+iarg: procedure = .int
+  arg v = .int, dflt = .int
+  if isnum(v) = 1 then return toint(numval(v))
+  return dflt
+
+/* substring with xBase rules: start may be negative */
+xsubstr: procedure = .string
+  arg s = .string, st = .int, ln = .int
+  n = length(s)
+  if st < 0 then st = n + st + 1
+  if st < 1 then st = 1
+  if st > n then return ''
+  if ln < 0 then ln = n - st + 1
+  if ln = 0 then return ''
+  return substr(s, st, ln)
+
+/* the numeric part at the beginning of a string */
+valnum: procedure = .int
+  arg s = .string
+  t = strip(s, 'L')
+  n = length(t)
+  i = 1
+  if i <= n then do
+    c = substr(t, i, 1)
+    if c = '-' | c = '+' then i = i + 1
+  end
+  dig = 0
+  dot = 0
+  decs = 0
+  do while i <= n
+    c = substr(t, i, 1)
+    if isdigitc(c) = 1 then do
+      dig = dig + 1
+      if dot = 1 then decs = decs + 1
+    end
+    else if c = '.' & dot = 0 then dot = 1
+    else leave
+    i = i + 1
+  end
+  if dig = 0 then return mkint(0)
+  txt = substr(t, 1, i - 1)
+  if left(txt, 1) = '+' then txt = substr(txt, 2)
+  if dot = 0 then do
+    if length(txt) < 17 then return mkint(txt as .int)
+    return mknum(txt as .float, length(txt), 0)
+  end
+  if right(txt, 1) = '.' then txt = txt || '0'
+  return mknum(txt as .float, length(txt), decs)
+
+xtrimall: procedure = .string
+  arg s = .string
+  return strip(s)
+
+xaspace: procedure = .string
+  arg n = .int
+  if n <= 0 then return ''
+  return copies(' ', n)
+
+isalphac: procedure = .int
+  arg c = .string
+  k = c2d(c)
+  if k >= 65 & k <= 90 then return 1
+  if k >= 97 & k <= 122 then return 1
+  return 0
+
+nextrand: procedure = .int
+  seed = (seed * 1103515245 + 12345) % 2147483648
+  return seed
+
+/* position of a substring, with optional start/end */
+xat: procedure = .int
+  arg needle = .string, hay = .string, st = .int, en = .int
+  if needle == '' then return 0
+  if st < 1 then st = 1
+  if en <= 0 | en > length(hay) then en = length(hay)
+  if st > en then return 0
+  seg = substr(hay, st, en - st + 1)
+  p = pos(needle, seg)
+  if p = 0 then return 0
+  return p + st - 1
+
+xrat: procedure = .int
+  arg needle = .string, hay = .string
+  if needle == '' then return 0
+  return lastpos(needle, hay)
+
+mkstrarr: procedure = .int
+  arg n = .int
+  return mkarray(n)
+
+/* sort comparison: element order (block or default) */
+sortless: procedure = .int
+  arg a = .int, b = .int, blk = .int
+  if blk > 0 then do
+    r = evalblock2(blk, a, b)
+    if r = 2 then return 1
+    return 0
+  end
+  r = cmpv(a, b)
+  if r = 2 then return 0
+  if r < 0 then return 1
+  return 0
+
+/* merge sort of vdat[s..s+n-1] using tmp area */
+msort: procedure = .void
+  arg s = .int, n = .int, blk = .int
+  if n < 2 then return
+  tmp = nv + 1
+  nv = nv + n
+  w = 1
+  do while w < n
+    i = 0
+    do while i < n
+      lo = i
+      mid = i + w
+      if mid > n then mid = n
+      hi = i + 2 * w
+      if hi > n then hi = n
+      a = lo
+      b = mid
+      k = lo
+      do while a < mid & b < hi
+        if sortless(vdat[s + b], vdat[s + a], blk) = 1 then do
+          vdat[tmp + k] = vdat[s + b]
+          b = b + 1
+        end
+        else do
+          vdat[tmp + k] = vdat[s + a]
+          a = a + 1
+        end
+        k = k + 1
+        if ctl <> 0 then return
+      end
+      do while a < mid
+        vdat[tmp + k] = vdat[s + a]
+        a = a + 1
+        k = k + 1
+      end
+      do while b < hi
+        vdat[tmp + k] = vdat[s + b]
+        b = b + 1
+        k = k + 1
+      end
+      i = i + 2 * w
+    end
+    do j = 0 to n - 1
+      vdat[s + j] = vdat[tmp + j]
+    end
+    w = w * 2
+  end
+  return
+
+bitop: procedure = .int
+  arg op = .int, a = .int, b = .int
+  r = 0
+  w = 1
+  if a < 0 then a = 0 - a
+  if b < 0 then b = 0 - b
+  do 62
+    x = a % 2
+    y = b % 2
+    z = 0
+    if op = 1 then do
+      if x = 1 & y = 1 then z = 1
+    end
+    else if op = 2 then do
+      if x = 1 | y = 1 then z = 1
+    end
+    else do
+      if x <> y then z = 1
+    end
+    r = r + z * w
+    w = w * 2
+    a = a / 2
+    b = b / 2
+  end
+  return r
+
+/* Array(n1, n2, ...) : nested arrays */
+mkmulti: procedure = .int
+  arg base = .int, lvl = .int, tot = .int
+  k = fv[base + lvl]
+  cnt = 0
+  if isnum(k) = 1 then cnt = toint(numval(k))
+  if cnt < 0 then cnt = 0
+  a = mkarray(cnt)
+  if lvl < tot then do
+    do i = 1 to cnt
+      call arrset a, i, mkmulti(base, lvl + 1, tot)
+    end
+  end
+  return a
+
+/* deep copy of arrays and hashes */
+cloneval: procedure = .int
+  arg v = .int
+  if isarr(v) = 1 then do
+    n = arrlen(v)
+    a = mkarray(n)
+    do i = 1 to n
+      call arrset a, i, cloneval(arrget(v, i))
+    end
+    return a
+  end
+  if ishash(v) = 1 then do
+    h = mkhash()
+    do i = 1 to hashlen(v)
+      call hset h, arrget(ca1[v], i), cloneval(arrget(ca2[v], i))
+    end
+    return h
+  end
+  return v
+
+/* value as source text, for hb_ValToExp */
+vtoexp: procedure = .string
+  arg v = .int
+  if isstr(v) = 1 then do
+    s = cstr[v]
+    if pos('"', s) = 0 then return '"' || s || '"'
+    return "'" || s || "'"
+  end
+  if isdate(v) = 1 then return '0d' || dtos(cint[v])
+  if isarr(v) = 1 then do
+    r = '{'
+    do i = 1 to arrlen(v)
+      if i > 1 then r = r || ', '
+      r = r || vtoexp(arrget(v, i))
+    end
+    return r || '}'
+  end
+  if ishash(v) = 1 then do
+    r = '{'
+    do i = 1 to hashlen(v)
+      if i > 1 then r = r || ', '
+      r = r || vtoexp(arrget(ca1[v], i)) || ' => ' || vtoexp(arrget(ca2[v], i))
+    end
+    if hashlen(v) = 0 then r = r || '=>'
+    return r || '}'
+  end
+  return vtostr(v)
+
+/* hb_StrFormat: %s %d %i %f %% */
+strformat: procedure = .string
+  arg base = .int, n = .int
+  f = cstr[fv[base + 1]]
+  r = ''
+  k = 1
+  i = 1
+  do while i <= length(f)
+    c = substr(f, i, 1)
+    if c = '%' then do
+      i = i + 1
+      c = substr(f, i, 1)
+      if c = '%' then r = r || '%'
+      else do
+        k = k + 1
+        if k <= n then r = r || vtostr(fv[base + k])
+      end
+    end
+    else r = r || c
+    i = i + 1
+  end
+  return r

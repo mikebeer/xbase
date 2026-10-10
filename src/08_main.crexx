@@ -1,0 +1,29 @@
+/* ---------------------------------------------------------------- driver */
+call initall
+if argv.0 < 1 then do
+  say 'usage: rxvm xbase.rxbin -a program.prg [arguments]'
+  exit 2
+end
+progname = argv[1]
+progdir = dirof(progname)
+incpath = progdir
+nargvs = argv.0 - 1
+do ai = 2 to argv.0
+  argvs[ai - 1] = argv[ai]
+end
+rc = lexfile(progname)
+if rc <> 0 then do
+  say 'Error: cannot open file ' || progname
+  exit 1
+end
+call addtok E_EOL, '', 0
+call addtok E_EOF, '', 0
+tp = 1
+junk = parseprogram()
+if perrflag = 1 then do
+  call errout progname || '(' || perrline || ') Error: ' || perrmsg
+  exit 1
+end
+call runprogram
+call shutdown
+exit exitcode

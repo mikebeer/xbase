@@ -1,0 +1,360 @@
+/* ===================================================================== */
+/*                       PARSER: FUNCTIONS AND CLASSES                   */
+/* ===================================================================== */
+newfn: procedure = .int
+  arg name = .string
+  nfn = nfn + 1
+  fnname[nfn] = name
+  fnpar[nfn] = 0
+  fnslots[nfn] = 0
+  fnbody[nfn] = 0
+  fnclass[nfn] = 0
+  return nfn
+
+/* start a function: parses the optional parameter list; leaves the context open */
+savenvar = 0
+beginfunc: procedure = .int
+  arg name = .string
+  fid = newfn(name)
+  curfn = fid
+  infunc = 1
+  savenvar = nvar
+  curcx = newctx(0, 0)
+  np = 0
+  if isop('(') = 1 then do
+    call adv
+    do while isop(')') = 0
+      if tk[tp] = E_OP then do
+        if ts[tp] == '@' then call adv
+      end
+      if isop('.') = 1 then do
+        /* ... */
+        call adv
+        call adv
+        call adv
+        iterate
+      end
+      if tk[tp] <> E_IDENT then do
+        call perr 'Syntax error in parameter list'
+        leave
+      end
+      sym = tv[tp]
+      call adv
+      np = np + 1
+      sl = newslot()
+      junk = declvar(sym, 1, sl)
+      if isword('AS') = 1 then do
+        call adv
+        call adv
+      end
+      if isop(',') = 1 then call adv
+    end
+    call expectop ')'
+  end
+  fnpar[fid] = np
+  return fid
+
+endfunc: procedure = .void
+  arg fid = .int, body = .int, oldnvar = .int
+  fnbody[fid] = body
+  fnslots[fid] = cxnslot[curcx]
+  if fnslots[fid] < fnpar[fid] then fnslots[fid] = fnpar[fid]
+  nvar = oldnvar
+  curcx = 0
+  infunc = 0
+  curfn = 0
+  return
+
+parsefuncdef: procedure = .int
+  /* at FUNCTION / PROCEDURE keyword (STATIC / INIT / EXIT already consumed) */
+  call adv
+  if tk[tp] <> E_IDENT then do
+    call perr 'Syntax error: function name expected'
+    return 0
+  end
+  name = ts[tp]
+  sym = tv[tp]
+  call adv
+  fid = beginfunc(name)
+  oldnvar = savenvar
+  call skipline
+  body = parsestmts()
+  call endfunc fid, body, oldnvar
+  sfn[sym] = fid
+  if firstfn = 0 then firstfn = fid
+  if name == 'MAIN' then mainfn = fid
+  return fid
+
+newclass: procedure = .int
+  arg name = .string, par = .int
+  ncls = ncls + 1
+  clname[ncls] = name
+  clpar[ncls] = par
+  clnslot[ncls] = 0
+  if par > 0 then clnslot[ncls] = clnslot[par]
+  scls[intern(name)] = ncls
+  return ncls
+
+adddata: procedure = .int
+  arg cls = .int, sym = .int
+  s = pm_get(2, cls, sym)
+  if s > 0 then return s
+  clnslot[cls] = clnslot[cls] + 1
+  call pm_put 2, cls, sym, clnslot[cls]
+  return clnslot[cls]
+
+parseclass: procedure = .int
+  /* at CLASS */
+  call adv
+  if tk[tp] <> E_IDENT then do
+    call perr 'Syntax error: class name expected'
+    return 0
+  end
+  name = ts[tp]
+  call adv
+  par = 0
+  if isword('INHERIT') = 1 | isword('FROM') = 1 | isword('INHERITS') = 1 then do
+    call adv
+    if tk[tp] = E_IDENT then do
+      par = scls[tv[tp]]
+      if par = 0 then call perr 'Parent class not found: ' || ts[tp]
+      call adv
+    end
+    do while isop(',') = 1
+      call adv
+      call adv
+    end
+  end
+  call skipline
+  cls = newclass(name, par)
+  do forever
+    call skipeol
+    if tk[tp] = E_EOF | perrflag = 1 then leave
+    if tk[tp] <> E_IDENT then do
+      call skipline
+      iterate
+    end
+    w = ts[tp]
+    if w == 'ENDCLASS' then do
+      call adv
+      leave
+    end
+    if w == 'END' then do
+      call adv
+      if isword('CLASS') = 1 then call adv
+      leave
+    end
+    shared = 0
+    if w == 'CLASS' & (nextisword('VAR') = 1 | nextisword('DATA') = 1) then do
+      call adv
+      w = ts[tp]
+      shared = 1
+    end
+    if w == 'CLASSDATA' | w == 'CLASSVAR' then shared = 1
+    if w == 'VAR' | w == 'DATA' | w == 'CLASSDATA' | w == 'CLASSVAR' | w == 'MEMBER' then do
+      call adv
+      do forever
+        if tk[tp] <> E_IDENT then leave
+        sym = tv[tp]
+        call adv
+        init = 0
+        do forever
+          if isword('AS') = 1 then do
+            call adv
+            call adv
+            iterate
+          end
+          if isword('INIT') = 1 then do
+            call adv
+            init = parseexpr()
+            iterate
+          end
+          if isword('READONLY') = 1 | isword('EXPORTED') = 1 | isword('VISIBLE') = 1 | isword('HIDDEN') = 1 | isword('PROTECTED') = 1 | isword('PERSISTENT') = 1 | isword('SHARED') = 1 | isword('EXPORT') = 1 then do
+            call adv
+            iterate
+          end
+          leave
+        end
+        if shared = 1 then do
+          nstatic = nstatic + 1
+          sv[nstatic] = 0
+          call pm_put 3, cls, sym, nstatic
+          if init > 0 then do
+            nsvinit = nsvinit + 1
+            svinit[nsvinit] = init
+            svslot[nsvinit] = nstatic
+          end
+        end
+        else do
+          slot = adddata(cls, sym)
+          if init > 0 then do
+            ncinit = ncinit + 1
+            cinitcls[ncinit] = cls
+            cinitslot[ncinit] = slot
+            cinitnode[ncinit] = init
+          end
+        end
+        if isop(',') = 1 then do
+          call adv
+          iterate
+        end
+        leave
+      end
+      call skipline
+      iterate
+    end
+    if w == 'METHOD' | w == 'ACCESS' | w == 'ASSIGN' | w == 'MESSAGE' | w == 'CONSTRUCTOR' | w == 'DESTRUCTOR' then do
+      call adv
+      if tk[tp] <> E_IDENT then do
+        call skipline
+        iterate
+      end
+      mname = ts[tp]
+      msym = tv[tp]
+      call adv
+      /* look ahead for INLINE on this line */
+      inl = 0
+      j = tp
+      do while tk[j] <> E_EOL & tk[j] <> E_EOF
+        if tk[j] = E_IDENT then do
+          if ts[j] == 'INLINE' then do
+            inl = j
+            leave
+          end
+        end
+        j = j + 1
+      end
+      if inl > 0 then do
+        fid = beginfunc(mname)
+        oldnvar = savenvar
+        if isword('INLINE') = 1 then call adv
+        e = parseexpr()
+        body = mknode(K_STMTS, mknode(K_RETURN, e, 0, 0), 0, 0)
+        call endfunc fid, body, oldnvar
+        fnclass[fid] = cls
+        call pm_put 1, cls, msym, fid
+        call skipline
+      end
+      else do
+        call pm_put 4, cls, msym, 1
+        call skipline
+      end
+      iterate
+    end
+    call skipline
+  end
+  return 0
+
+/* METHOD name( params ) CLASS cls  -- the definition with a body */
+parsemethoddef: procedure = .int
+  call adv
+  if tk[tp] <> E_IDENT then do
+    call perr 'Syntax error: method name expected'
+    return 0
+  end
+  mname = ts[tp]
+  msym = tv[tp]
+  call adv
+  clsname = ''
+  if isop(':') = 1 then do
+    /* METHOD Class:name(...) */
+    clsname = mname
+    call adv
+    mname = ts[tp]
+    msym = tv[tp]
+    call adv
+  end
+  fid = beginfunc(mname)
+  oldnvar = savenvar
+  if isword('CLASS') = 1 then do
+    call adv
+    clsname = ts[tp]
+    call adv
+  end
+  if isword('CONSTRUCTOR') = 1 then call adv
+  cls = scls[intern(upper(clsname))]
+  if cls = 0 then do
+    call perr 'Class not found: ' || clsname
+    return 0
+  end
+  call skipline
+  body = parsestmts()
+  call endfunc fid, body, oldnvar
+  fnclass[fid] = cls
+  call pm_put 1, cls, msym, fid
+  return fid
+
+/* the whole program */
+parseprogram: procedure = .int
+  curcx = 0
+  infunc = 0
+  /* implicit main procedure for statements before the first function */
+  call skipeol
+  if tk[tp] = E_IDENT then do
+    w = ts[tp]
+    if w <> 'FUNCTION' & w <> 'PROCEDURE' & w <> 'STATIC' & w <> 'INIT' & w <> 'EXIT' & w <> 'CREATE' & w <> 'CLASS' & w <> 'METHOD' & w <> 'REQUEST' & w <> 'EXTERNAL' & w <> 'ANNOUNCE' & w <> 'DYNAMIC' & w <> 'FUNC' & w <> 'PROC' & w <> 'MEMVAR' & w <> 'FIELD' & w <> 'DECLARE' then do
+      stem = srcname
+      k = lastpos('/', stem)
+      if k > 0 then stem = substr(stem, k + 1)
+      k = lastpos('.', stem)
+      if k > 1 then stem = substr(stem, 1, k - 1)
+      fid = beginfunc(upper(stem))
+      oldnvar = savenvar
+      body = parsestmts()
+      call endfunc fid, body, oldnvar
+      sfn[intern(upper(stem))] = fid
+      if firstfn = 0 then firstfn = fid
+    end
+  end
+  do forever
+    call skipeol
+    if tk[tp] = E_EOF | perrflag = 1 then leave
+    if tk[tp] <> E_IDENT then do
+      call perr 'Syntax error near ' || ts[tp]
+      leave
+    end
+    w = ts[tp]
+    if w == 'FUNCTION' | w == 'PROCEDURE' | w == 'FUNC' | w == 'PROC' then do
+      junk = parsefuncdef()
+      iterate
+    end
+    if w == 'STATIC' | w == 'INIT' | w == 'EXIT' then do
+      if nextisword('FUNCTION') = 1 | nextisword('PROCEDURE') = 1 | nextisword('FUNC') = 1 | nextisword('PROC') = 1 then do
+        call adv
+        junk = parsefuncdef()
+        if w == 'INIT' then do
+          ninit = ninit + 1
+          initfns[ninit] = junk
+        end
+        if w == 'EXIT' then do
+          nexitp = nexitp + 1
+          exitfns[nexitp] = junk
+        end
+        iterate
+      end
+      if w == 'STATIC' then do
+        junk = parsestatic()
+        call skipline
+        iterate
+      end
+    end
+    if w == 'CREATE' & nextisword('CLASS') = 1 then do
+      call adv
+      junk = parseclass()
+      iterate
+    end
+    if w == 'CLASS' then do
+      junk = parseclass()
+      iterate
+    end
+    if w == 'METHOD' then do
+      junk = parsemethoddef()
+      iterate
+    end
+    if w == 'REQUEST' | w == 'EXTERNAL' | w == 'ANNOUNCE' | w == 'DYNAMIC' | w == 'MEMVAR' | w == 'FIELD' | w == 'DECLARE' | w == 'NOTE' then do
+      call skipline
+      iterate
+    end
+    call perr 'Statement outside of a function: ' || w
+  end
+  return 0

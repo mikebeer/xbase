@@ -1,0 +1,81 @@
+/* ===================================================================== */
+/*                         START UP AND SHUT DOWN                        */
+/* ===================================================================== */
+initall: procedure = .void
+  do i = 1 to 2048
+    sbk[i] = 0
+  end
+  do i = 1 to 4100
+    pmb[i] = 0
+  end
+  junk = intern('NIL')
+  call initerrclass
+  call initprims
+  call initareas
+  call definemacro '__HARBOUR__', '', '1'
+  call definemacro '__XBASE__', '', '1'
+  call definemacro '__PLATFORM__', '', '"LINUX"'
+  call definemacro 'HB_VERSION', '', '"3.2.0"'
+  return
+
+runprogram: procedure = .void
+  /* static initialisers */
+  do i = 1 to nsvinit
+    v = evalnode(svinit[i])
+    sv[svslot[i]] = v
+    if ctl <> 0 then leave
+  end
+  ctl = 0
+  fn = mainfn
+  if fn = 0 then fn = firstfn
+  if fn = 0 then do
+    call errout 'Error: no entry point'
+    exitcode = 1
+    return
+  end
+  do i = 1 to ninit
+    call runfn initfns[i], 0
+  end
+  call runfn fn, 1
+  if ctl = E_BRK then ctl = 0
+  do i = 1 to nexitp
+    call runfn exitfns[i], 0
+  end
+  return
+
+runfn: procedure = .void
+  arg f = .int, withargs = .int
+  base = ftop
+  cnt = 0
+  if withargs = 1 then cnt = nargvs
+  slots = fnslots[f]
+  if cnt > slots then slots = cnt
+  ftop = base + slots
+  do i = 1 to slots
+    fv[base + i] = 0
+  end
+  if withargs = 1 then do
+    do i = 1 to nargvs
+      fv[base + i] = mkstr(argvs[i])
+    end
+  end
+  junk = invoke(f, base, cnt, 0, 0)
+  return
+
+doquit: procedure = .void
+  arg code = .int
+  exitcode = code
+  do i = 1 to nexitp
+    call runfn exitfns[i], 0
+  end
+  call shutdown
+  exit code
+
+shutdown: procedure = .void
+  call closeallareas
+  call flushout
+  if outcol > 0 then do
+    call charout 'stdout', '0a'x
+    outcol = 0
+  end
+  return

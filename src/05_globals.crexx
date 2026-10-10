@@ -1,0 +1,237 @@
+/* ------------------------------------------------------------------ heap */
+ctag = .int[]        /* cell type                                    */
+cint = .int[]        /* date number / array start / block node / class id / number picture */
+ca1 = .int[]          /* array length / hash keys / block captures / object slots */
+ca2 = .int[]          /* array capacity / hash values / block Self */
+cnum = .float[]      /* number value                                 */
+cstr = .string[]     /* string value                                 */
+ncell = 2
+vdat = .int[]        /* array element storage                        */
+nv = 0
+
+/* --------------------------------------------------------------- symbols */
+snm = .string[]      /* symbol name (upper case)        */
+shn = .int[]         /* hash chain                      */
+sbk = .int[]         /* hash buckets                    */
+nsym = 0
+sfn = .int[]         /* user function id                */
+sbi = .int[]         /* builtin id                      */
+smv = .int[]         /* memvar value                    */
+smvd = .int[]        /* memvar visible: 0 no, 1 yes     */
+sdef = .int[]        /* #define index                   */
+pmin = .int[]
+pmax = .int[]
+
+/* ---------------------------------------------------------------- tokens */
+tk = .int[]          /* token kind                      */
+ts = .string[]       /* token text                      */
+tl = .int[]          /* line number                     */
+tsp = .int[]         /* 1 = preceded by blank           */
+tv = .int[]          /* identifier symbol id            */
+tor = .string[]      /* original text of the token      */
+ntok = 0
+tp = 1
+inblk = 0
+srcname = ''
+curline = 0
+ifdepth = 0
+ifskip = 0
+ifstate = .int[]     /* per nesting: 1 taking, 2 skipping-but-may-take, 3 done, 4 dead */
+dname = .string[]    /* #define names */
+dval = .string[]     /* #define values */
+dpar = .string[]     /* #define parameters, '' for none */
+ndef = 0
+incpath = '.'
+
+/* ----------------------------------------------------------------- nodes */
+nt = .int[]
+na = .int[]
+nb = .int[]
+nc = .int[]
+nd = .int[]
+ne = .int[]
+nf = .int[]
+nx = .int[]          /* next sibling */
+nl = .int[]          /* source line */
+ns = .string[]
+nn = 0
+
+/* ------------------------------------------------------- parse-time scope */
+cxkind = .int[]      /* context: 0 function, 1 block   */
+cxpar = .int[]       /* parent context                 */
+cxnslot = .int[]     /* slots in use                   */
+cxncap = .int[]      /* number of captures             */
+ncx = 0
+curcx = 0
+vname = .int[]       /* declared name symbol id        */
+vctx = .int[]        /* context of the declaration     */
+vkind = .int[]       /* 1 local/parameter slot, 2 static, 3 capture */
+vidx = .int[]        /* slot / static index / capture index */
+vsrck = .int[]       /* capture: source kind 1 slot of parent, 2 capture of parent */
+vsrci = .int[]       /* capture: source index          */
+nvar = 0
+mstname = .int[]     /* module-level statics */
+mstidx = .int[]
+nmst = 0
+nstatic = 0
+curfn = 0
+infunc = 0
+curclass = 0
+fieldnames = 0
+
+/* ------------------------------------------------------------- functions */
+fnname = .string[]
+fnpar = .int[]        /* parameter count */
+fnslots = .int[]      /* frame size      */
+fnbody = .int[]       /* body node       */
+fnclass = .int[]      /* class id for methods, else 0 */
+nfn = 0
+sv = .int[]          /* static variables */
+svinit = .int[]      /* static initialiser nodes, in order: node, slot */
+svslot = .int[]
+nsvinit = 0
+mainfn = 0
+firstfn = 0
+
+/* ---------------------------------------------------------------- frames */
+fv = .int[]
+ftop = 0
+fbase = 0
+fpc = 0              /* PCount of current call */
+curself = 0
+curcap = 0           /* capture array start of running block */
+calldepth = 0
+pvs = .int[]         /* private save stack: symbol */
+pvv = .int[]         /* private save stack: old value */
+pvd = .int[]         /* private save stack: old visibility */
+pvtop = 0
+pcln = .int[]      /* call stack: line */
+pcname = .string[]
+pctop = 0
+
+/* --------------------------------------------------------------- control */
+ctl = 0
+retv = 0
+brkval = 0
+errblk = 0
+errdepth = 0
+seqdepth = 0
+exitcode = 0
+
+/* ----------------------------------------------------------------- misc */
+setdec = 2
+setexact = 0
+setfixed = 0
+setcentury = 0
+setdatefmt = 'mm/dd/yy'
+setdeleted = 0
+setsoft = 0
+setepoch = 1900
+setconsole = 1
+setprint = 0
+setbell = 0
+setescape = 1
+setunique = 0
+setdefault = ''
+outcol = 0
+outrow = 0
+scrrow = 0
+scrcol = 0
+outbuf = ''
+seed = 12345
+inbuf = ''
+inhave = 0
+ineof = 0
+argvs = .string[]
+nargvs = 0
+progname = ''
+progdir = '.'
+
+/* --------------------------------------------------------------- classes */
+clname = .string[]
+clpar = .int[]
+clnslot = .int[]
+ncls = 0
+scls = .int[]        /* symbol -> class id */
+cinitcls = .int[]
+cinitslot = .int[]
+cinitnode = .int[]
+ncinit = 0
+pmk1 = .int[]
+pmk2 = .int[]
+pmk3 = .int[]
+pmv = .int[]
+pmn = .int[]
+pmb = .int[]
+npm = 0
+curmcls = 0          /* class of the running method */
+initfns = .int[]
+ninit = 0
+exitfns = .int[]
+nexitp = 0
+outstarted = 0
+smacro = .int[]
+errcls = 0
+curarea = 0
+curl = 0
+
+/* ------------------------------------------------------------ work areas */
+wa_used = .int[]
+wa_alias = .string[]
+wa_file = .string[]
+wa_nrec = .int[]
+wa_recno = .int[]
+wa_eof = .int[]
+wa_bof = .int[]
+wa_found = .int[]
+wa_nfld = .int[]
+wa_hdr = .int[]
+wa_reclen = .int[]
+wa_dirty = .int[]
+wa_order = .int[]
+wa_ipos = .int[]
+wa_filter = .int[]
+wa_filtertxt = .string[]
+wa_locfor = .int[]
+wa_locwhile = .int[]
+wa_ro = .int[]
+wa_nix = .int[]
+wa_relchild = .int[]
+wa_relkey = .int[]
+wa_nrel = .int[]
+wa_memo = .string[]
+wa_hasmemo = .int[]
+wa_blank = .string[]
+fsym = .int[]
+fnam = .string[]
+ftyp = .string[]
+flen = .int[]
+fdec = .int[]
+foff = .int[]
+recs = .string[]
+ix_area = .int[]
+ix_node = .int[]
+ix_text = .string[]
+ix_for = .int[]
+ix_fortext = .string[]
+ix_desc = .int[]
+ix_uniq = .int[]
+ix_file = .string[]
+ix_start = .int[]
+ix_len = .int[]
+ix_cap = .int[]
+ix_dirty = .int[]
+ix_name = .string[]
+nix = 0
+ixk = .int[]
+ixr = .int[]
+nixpool = 0
+waix = .int[]
+gt_node = .int[]
+gt_pic = .int[]
+gt_valid = .int[]
+gt_when = .int[]
+gt_row = .int[]
+gt_col = .int[]
+ngets = 0
+altfile = ''

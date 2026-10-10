@@ -1,0 +1,284 @@
+/* ===================================================================== */
+/*                    CONSOLE INPUT, FILES AND TRANSFORM                 */
+/* ===================================================================== */
+/* read a line from standard input; sets ineof */
+readcon: procedure = .string
+  call flushout
+  if inhave = 1 then do
+    inhave = 0
+    s = inbuf
+    inbuf = ''
+    return s
+  end
+  if lines() = 0 then do
+    ineof = 1
+    return ''
+  end
+  return linein()
+
+/* one character from standard input: 13 at the end of a line, 0 at the end of input */
+readkey: procedure = .int
+  call flushout
+  if inhave = 0 then do
+    if lines() = 0 then do
+      ineof = 1
+      return 0
+    end
+    inbuf = linein()
+    inhave = 1
+  end
+  if inbuf == '' then do
+    inhave = 0
+    return 13
+  end
+  c = c2d(left(inbuf, 1))
+  inbuf = substr(inbuf, 2)
+  return c
+
+/* ------------------------------------------------------------- file table */
+fhname = .string[]
+fhdata = .string[]
+fhpos = .int[]
+fhopen = .int[]
+fhdirty = .int[]
+fhmode = .int[]
+nfh = 0
+
+bytesof: procedure = .string
+  arg fname = .string
+  b = readbinary(fname)
+  return x2c(bin2x(b))
+
+putbytes: procedure = .int
+  arg fname = .string, s = .string
+  hx = c2x(s)
+  b = x2bin(hx)
+  return writebinary(fname, b)
+
+newhandle: procedure = .int
+  arg fname = .string, data = .string, mode = .int
+  h = 0
+  do i = 1 to nfh
+    if fhopen[i] = 0 then do
+      h = i
+      leave
+    end
+  end
+  if h = 0 then do
+    nfh = nfh + 1
+    h = nfh
+  end
+  fhname[h] = fname
+  fhdata[h] = data
+  fhpos[h] = 0
+  fhopen[h] = 1
+  fhdirty[h] = 0
+  fhmode[h] = mode
+  return h + 2
+
+fclosehandle: procedure = .int
+  arg h = .int
+  i = h - 2
+  if i < 1 | i > nfh then return 0
+  if fhopen[i] = 0 then return 0
+  if fhdirty[i] = 1 then junk = putbytes(fhname[i], fhdata[i])
+  fhopen[i] = 0
+  fhdata[i] = ''
+  return 1
+
+closeallfiles: procedure = .void
+  do i = 1 to nfh
+    if fhopen[i] = 1 then junk = fclosehandle(i + 2)
+  end
+  return
+
+/* ------------------------------------------------------------- Transform */
+xtransform: procedure = .string
+  arg v = .int, pic = .string
+  fn = ''
+  tmpl = pic
+  if left(pic, 1) = '@' then do
+    sp = pos(' ', pic)
+    if sp = 0 then do
+      fn = upper(substr(pic, 2))
+      tmpl = ''
+    end
+    else do
+      fn = upper(substr(pic, 2, sp - 2))
+      tmpl = substr(pic, sp + 1)
+    end
+  end
+  if isnum(v) = 1 then return transnum(v, fn, tmpl)
+  if isstr(v) = 1 then do
+    s = cstr[v]
+    if pos('!', fn) > 0 then s = upper(s)
+    if tmpl == '' then return s
+    return transstr(s, fn, tmpl)
+  end
+  if islog(v) = 1 then do
+    if pos('Y', fn) > 0 then do
+      if v = 2 then return 'Y'
+      return 'N'
+    end
+    if v = 2 then return 'T'
+    return 'F'
+  end
+  if isdate(v) = 1 then do
+    if pos('E', fn) > 0 then return datefmt(cint[v], 'dd/mm/yy')
+    return datestr(cint[v])
+  end
+  return vtostr(v)
+
+transstr: procedure = .string
+  arg s = .string, fn = .string, tmpl = .string
+  r = ''
+  k = 1
+  rmode = 0
+  if pos('R', fn) > 0 then rmode = 1
+  do i = 1 to length(tmpl)
+    c = substr(tmpl, i, 1)
+    uc = upper(c)
+    slot = 0
+    if uc = 'A' | uc = 'N' | uc = 'X' | c = '9' | c = '#' | c = '!' | uc = 'L' | uc = 'Y' then slot = 1
+    if slot = 1 then do
+      ch = ' '
+      if k <= length(s) then ch = substr(s, k, 1)
+      k = k + 1
+      if c = '!' then ch = upper(ch)
+      r = r || ch
+    end
+    else do
+      if rmode = 1 then r = r || c
+      else do
+        ch = ' '
+        if k <= length(s) then ch = substr(s, k, 1)
+        k = k + 1
+        r = r || c
+      end
+    end
+  end
+  return r
+
+transnum: procedure = .string
+  arg v = .int, fn = .string, tmpl = .string
+  x = numval(v)
+  if pos('Z', fn) > 0 & x = 0.0 then return copies(' ', max(length(tmpl), 1))
+  if tmpl == '' then do
+    if pos('B', fn) > 0 then return strip(numstr(v), 'L')
+    return numstr(v)
+  end
+  /* decimals and integer slots */
+  dp = pos('.', tmpl)
+  nint = 0
+  ndec = 0
+  do i = 1 to length(tmpl)
+    c = substr(tmpl, i, 1)
+    if c = '9' | c = '#' | c = '*' | c = '$' then do
+      if dp = 0 | i < dp then nint = nint + 1
+      else ndec = ndec + 1
+    end
+  end
+  neg = 0
+  if x < 0.0 then do
+    neg = 1
+    x = 0.0 - x
+  end
+  s = fmtfloat(x, ndec)
+  ip = s
+  fp = ''
+  q = pos('.', s)
+  if q > 0 then do
+    ip = substr(s, 1, q - 1)
+    fp = substr(s, q + 1)
+  end
+  if length(ip) > nint then do
+    if nint > 0 | length(ip) > 1 | ip <> '0' then return copies('*', length(tmpl))
+  end
+  if ip == '0' & nint > 0 then do
+    /* a zero integer part shows as blank unless the slot before the point is 9 */
+    ip = '0'
+  end
+  fillc = ' '
+  if pos('*', tmpl) > 0 then fillc = '*'
+  ip = copies(fillc, nint - length(ip)) || ip
+  out = ''
+  ii = 1
+  fi = 1
+  seen = 0
+  do i = 1 to length(tmpl)
+    c = substr(tmpl, i, 1)
+    if c = '9' | c = '#' | c = '*' | c = '$' then do
+      if dp = 0 | i < dp then do
+        ch = substr(ip, ii, 1)
+        ii = ii + 1
+        if ch <> ' ' & ch <> '*' then seen = 1
+        else if c = '9' & ii > nint & dp > 0 & 0 = 1 then ch = '0'
+        if c = '$' & ch = fillc then ch = '$'
+        out = out || ch
+      end
+      else do
+        ch = substr(fp, fi, 1)
+        fi = fi + 1
+        out = out || ch
+      end
+    end
+    else if c = ',' then do
+      if seen = 1 then out = out || ','
+      else out = out || fillc
+    end
+    else out = out || c
+  end
+  if pos('E', fn) > 0 then do
+    t = ''
+    do i = 1 to length(out)
+      c = substr(out, i, 1)
+      if c = '.' then t = t || ','
+      else if c = ',' then t = t || '.'
+      else t = t || c
+    end
+    out = t
+  end
+  if neg = 1 then do
+    if pos('(', fn) > 0 then out = '(' || strip(out, 'L') || ')'
+    else do
+      p = 1
+      do while p <= length(out) & substr(out, p, 1) = ' '
+        p = p + 1
+      end
+      if p > 1 then out = substr(out, 1, p - 2) || '-' || substr(out, p)
+      else out = '-' || out
+    end
+  end
+  if pos('B', fn) > 0 then do
+    t = strip(out, 'L')
+    out = t || copies(' ', length(out) - length(t))
+  end
+  if pos('C', fn) > 0 & neg = 0 then out = out || ' CR'
+  return out
+
+setdate: procedure = .void
+  arg nm = .string
+  u = upper(strip(nm))
+  if u == 'AMERICAN' then setdatefmt = 'mm/dd/yy'
+  else if u == 'ANSI' then setdatefmt = 'yy.mm.dd'
+  else if u == 'BRITISH' | u == 'FRENCH' then setdatefmt = 'dd/mm/yy'
+  else if u == 'GERMAN' then setdatefmt = 'dd.mm.yy'
+  else if u == 'ITALIAN' then setdatefmt = 'dd-mm-yy'
+  else if u == 'JAPAN' then setdatefmt = 'yy/mm/dd'
+  else if u == 'USA' then setdatefmt = 'mm-dd-yy'
+  else if u == 'DUTCH' then setdatefmt = 'dd-mm-yy'
+  else if u == 'SPANISH' then setdatefmt = 'dd-mm-yy'
+  else setdatefmt = lower(strip(nm))
+  return
+
+/* move the cursor: new lines or blanks, as far as a line oriented console can */
+gotopos: procedure = .void
+  arg r = .int, c = .int
+  if r > scrrow then do
+    do while scrrow < r
+      call emitnl
+    end
+  end
+  else if r < scrrow & outcol > 0 then call emitnl
+  if c > outcol then call emit copies(' ', c - outcol)
+  return

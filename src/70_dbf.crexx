@@ -1,0 +1,1062 @@
+/* ===================================================================== */
+/*                  WORK AREAS, DBF TABLES AND INDEXES                   */
+/* ===================================================================== */
+initareas: procedure = .void
+  curarea = 1
+  return
+
+/* byte helpers on strings holding one byte per character */
+le: procedure = .int
+  arg d = .string, p = .int, nbl = .int
+  r = 0
+  m = 1
+  do i = 0 to nbl - 1
+    r = r + c2d(substr(d, p + i, 1)) * m
+    m = m * 256
+  end
+  return r
+
+leb: procedure = .string
+  arg v = .int, nbl = .int
+  r = ''
+  do i = 1 to nbl
+    r = r || d2c(v % 256)
+    v = v / 256
+  end
+  return r
+
+latin: procedure = .string
+  arg s = .string
+  /* characters above 255 cannot be stored in a DBF */
+  r = ''
+  do i = 1 to length(s)
+    c = substr(s, i, 1)
+    if c2d(c) > 255 then r = r || '?'
+    else r = r || c
+  end
+  return r
+
+ridx: procedure = .int
+  arg a = .int, r = .int
+  return (a - 1) * 100000 + r
+
+fidx: procedure = .int
+  arg a = .int, f = .int
+  return (a - 1) * 256 + f
+
+areaok: procedure = .int
+  arg a = .int
+  if a < 1 then return 0
+  if wa_used[a] = 1 then return 1
+  return 0
+
+findfreearea: procedure = .int
+  do a = 1 to 40
+    if wa_used[a] = 0 then return a
+  end
+  return 0
+
+aliasarea: procedure = .int
+  arg nm = .string
+  do a = 1 to 40
+    if wa_used[a] = 1 then do
+      if wa_alias[a] == nm then return a
+    end
+  end
+  return 0
+
+fieldfind: procedure = .int
+  arg a = .int, sym = .int
+  if a < 1 then return 0
+  if wa_used[a] = 0 then return 0
+  b = (a - 1) * 256
+  do f = 1 to wa_nfld[a]
+    if fsym[b + f] = sym then return f
+  end
+  return 0
+
+noarea: procedure = .int
+  return rterr('DBFNTX', 2001, 'Workarea not in use', '')
+
+/* ---------------------------------------------------------------- fields */
+fieldval: procedure = .int
+  arg a = .int, f = .int
+  r = wa_recno[a]
+  if wa_eof[a] = 1 | r < 1 | r > wa_nrec[a] then return blankfield(a, f)
+  s = recs[ridx(a, r)]
+  i = fidx(a, f)
+  raw = substr(s, foff[i] + 1, flen[i])
+  t = ftyp[i]
+  if t == 'C' then return mkstr(raw)
+  if t == 'N' | t == 'F' then do
+    v = strip(raw)
+    if v == '' | v == '.' | v == '-' then return mknum(0.0, flen[i], fdec[i])
+    if fdec[i] = 0 & pos('.', v) = 0 & length(v) < 17 then return mkint(v as .int)
+    return mknum(v as .float, flen[i], fdec[i])
+  end
+  if t == 'L' then do
+    c = upper(left(raw, 1))
+    if c == 'T' | c == 'Y' then return 2
+    return 1
+  end
+  if t == 'D' then do
+    if strip(raw) == '' then return mkdate(0)
+    return datelit(raw)
+  end
+  if t == 'M' then return mkstr(memoread(a, strip(raw)))
+  return mkstr(raw)
+
+blankfield: procedure = .int
+  arg a = .int, f = .int
+  i = fidx(a, f)
+  t = ftyp[i]
+  if t == 'C' then return mkstr(copies(' ', flen[i]))
+  if t == 'N' | t == 'F' then return mknum(0.0, flen[i], fdec[i])
+  if t == 'L' then return 1
+  if t == 'D' then return mkdate(0)
+  return mkstr('')
+
+/* the stored text of a value for field i, or '' + error */
+fieldtext: procedure = .string
+  arg a = .int, i = .int, v = .int
+  t = ftyp[i]
+  w = flen[i]
+  if t == 'C' then do
+    if isstr(v) = 0 then do
+      junk = rterr('DBFNTX', 1020, 'Data type error', wa_alias[a])
+      return ''
+    end
+    s = latin(cstr[v])
+    if length(s) >= w then return left(s, w)
+    return s || copies(' ', w - length(s))
+  end
+  if t == 'N' | t == 'F' then do
+    if isnum(v) = 0 then do
+      junk = rterr('DBFNTX', 1020, 'Data type error', wa_alias[a])
+      return ''
+    end
+    s = fmtfloat(numval(v), fdec[i])
+    if length(s) > w then return copies('*', w)
+    return padleft(s, w)
+  end
+  if t == 'L' then do
+    if islog(v) = 0 then do
+      junk = rterr('DBFNTX', 1020, 'Data type error', wa_alias[a])
+      return ''
+    end
+    if v = 2 then return 'T'
+    return 'F'
+  end
+  if t == 'D' then do
+    if isdate(v) = 0 then do
+      junk = rterr('DBFNTX', 1020, 'Data type error', wa_alias[a])
+      return ''
+    end
+    return dtos(cint[v])
+  end
+  if t == 'M' then do
+    if isstr(v) = 0 then do
+      junk = rterr('DBFNTX', 1020, 'Data type error', wa_alias[a])
+      return ''
+    end
+    return memowrite(a, cstr[v])
+  end
+  return copies(' ', w)
+
+fieldput: procedure = .void
+  arg a = .int, f = .int, v = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  r = wa_recno[a]
+  if wa_eof[a] = 1 | r < 1 | r > wa_nrec[a] then return
+  i = fidx(a, f)
+  txt = fieldtext(a, i, v)
+  if ctl <> 0 then return
+  if wa_nix[a] > 0 then call keysbefore a, r
+  k = ridx(a, r)
+  s = recs[k]
+  recs[k] = substr(s, 1, foff[i]) || txt || substr(s, foff[i] + flen[i] + 1)
+  wa_dirty[a] = 1
+  if wa_nix[a] > 0 then call keysafter a, r
+  return
+
+/* memo fields: .dbt file kept in memory */
+memoread: procedure = .string
+  arg a = .int, blk = .string
+  if blk == '' then return ''
+  b = blk as .int
+  if b < 1 then return ''
+  d = wa_memo[a]
+  p = b * 512 + 1
+  if p > length(d) then return ''
+  q = pos('1a1a'x, d, p)
+  if q = 0 then return substr(d, p)
+  return substr(d, p, q - p)
+
+memowrite: procedure = .string
+  arg a = .int, txt = .string
+  if txt == '' then return copies(' ', 10)
+  d = wa_memo[a]
+  if length(d) < 512 then d = copies('00'x, 512)
+  /* pad to a block boundary */
+  rem = length(d) % 512
+  if rem <> 0 then d = d || copies('00'x, 512 - rem)
+  blk = length(d) / 512
+  d = d || latin(txt) || '1a1a'x
+  wa_memo[a] = d
+  wa_hasmemo[a] = 1
+  s = blk || ''
+  return padleft(s, 10)
+
+/* --------------------------------------------------------------- opening */
+dbfstem: procedure = .string
+  arg f = .string
+  k = lastpos('/', f)
+  s = f
+  if k > 0 then s = substr(f, k + 1)
+  k = lastpos('.', s)
+  if k > 1 then s = substr(s, 1, k - 1)
+  return upper(s)
+
+dbfname: procedure = .string
+  arg f = .string
+  k = lastpos('/', f)
+  b = f
+  if k > 0 then b = substr(f, k + 1)
+  if pos('.', b) = 0 then return f || '.dbf'
+  return f
+
+openarea: procedure = .int
+  arg a = .int, fname = .string, alias = .string, ro = .int
+  fn = dbfname(fname)
+  if fileexists(fn) = 0 then do
+    junk = rterr('DBFNTX', 1001, 'Open error', fn)
+    return 0
+  end
+  d = bytesof(fn)
+  if length(d) < 33 then do
+    junk = rterr('DBFNTX', 1003, 'Corruption detected', fn)
+    return 0
+  end
+  nrec = le(d, 5, 4)
+  hdr = le(d, 9, 2)
+  rl = le(d, 11, 2)
+  nfl = (hdr - 33) / 32
+  if nfl > 255 then nfl = 255
+  base = (a - 1) * 256
+  off = 1
+  do f = 1 to nfl
+    p = 33 + (f - 1) * 32
+    nm = upper(strip(translate(substr(d, p, 11), ' ', '00'x)))
+    fnam[base + f] = nm
+    fsym[base + f] = intern(nm)
+    ftyp[base + f] = upper(substr(d, p + 11, 1))
+    flen[base + f] = c2d(substr(d, p + 16, 1))
+    fdec[base + f] = c2d(substr(d, p + 17, 1))
+    foff[base + f] = off
+    off = off + flen[base + f]
+  end
+  wa_used[a] = 1
+  wa_alias[a] = alias
+  wa_file[a] = fn
+  wa_nrec[a] = nrec
+  wa_nfld[a] = nfl
+  wa_hdr[a] = hdr
+  wa_reclen[a] = rl
+  wa_dirty[a] = 0
+  wa_order[a] = 0
+  wa_ipos[a] = 0
+  wa_nix[a] = 0
+  wa_filter[a] = 0
+  wa_filtertxt[a] = ''
+  wa_ro[a] = ro
+  wa_nrel[a] = 0
+  wa_hasmemo[a] = 0
+  wa_memo[a] = ''
+  wa_blank[a] = ' ' || copies(' ', rl - 1)
+  do r = 1 to nrec
+    recs[ridx(a, r)] = substr(d, hdr + (r - 1) * rl + 1, rl)
+  end
+  /* memo file */
+  do f = 1 to nfl
+    if ftyp[base + f] == 'M' then do
+      mf = changestr('.dbf', fn, '.dbt')
+      if mf == fn then mf = fn || '.dbt'
+      wa_hasmemo[a] = 1
+      if fileexists(mf) = 1 then wa_memo[a] = bytesof(mf)
+      leave
+    end
+  end
+  wa_recno[a] = 1
+  wa_eof[a] = 0
+  wa_bof[a] = 0
+  wa_found[a] = 0
+  if nrec = 0 then do
+    wa_eof[a] = 1
+    wa_bof[a] = 1
+  end
+  return 1
+
+flushdbf: procedure = .void
+  arg a = .int
+  if wa_used[a] = 0 then return
+  if wa_dirty[a] = 0 | wa_ro[a] = 1 then return
+  nrec = wa_nrec[a]
+  rl = wa_reclen[a]
+  nfl = wa_nfld[a]
+  base = (a - 1) * 256
+  ver = 3
+  if wa_hasmemo[a] = 1 then ver = 131
+  ds = date('S')
+  tj = ymd2jdn(substr(ds, 1, 4) as .int, substr(ds, 5, 2) as .int, substr(ds, 7, 2) as .int)
+  call jdn2ymd tj
+  h = d2c(ver) || d2c(gy % 100) || d2c(gm) || d2c(gd) || leb(nrec, 4) || leb(wa_hdr[a], 2) || leb(rl, 2) || copies('00'x, 20)
+  do f = 1 to nfl
+    nm = fnam[base + f]
+    h = h || left(nm, 10, '00'x) || '00'x || ftyp[base + f] || copies('00'x, 4) || d2c(flen[base + f]) || d2c(fdec[base + f]) || copies('00'x, 14)
+  end
+  h = h || '0d'x
+  chunk = ''
+  body = ''
+  do r = 1 to nrec
+    chunk = chunk || recs[ridx(a, r)]
+    if r % 200 = 0 then do
+      body = body || chunk
+      chunk = ''
+    end
+  end
+  body = body || chunk
+  junk = putbytes(wa_file[a], h || body || '1a'x)
+  if wa_hasmemo[a] = 1 then do
+    mf = changestr('.dbf', wa_file[a], '.dbt')
+    if mf == wa_file[a] then mf = wa_file[a] || '.dbt'
+    d = wa_memo[a]
+    if length(d) < 512 then d = copies('00'x, 512)
+    nbl = length(d) / 512 + 1
+    d = leb(nbl, 4) || substr(d, 5)
+    junk = putbytes(mf, d)
+  end
+  wa_dirty[a] = 0
+  return
+
+closearea: procedure = .void
+  arg a = .int
+  if a < 1 | wa_used[a] = 0 then return
+  call flushindexes a
+  call flushdbf a
+  do r = 1 to wa_nrec[a]
+    recs[ridx(a, r)] = ''
+  end
+  wa_used[a] = 0
+  wa_nix[a] = 0
+  wa_order[a] = 0
+  wa_nrel[a] = 0
+  wa_filter[a] = 0
+  return
+
+closeallareas: procedure = .void
+  do a = 1 to 40
+    if wa_used[a] = 1 then call closearea a
+  end
+  call closeallfiles
+  return
+
+/* create a new table; stru is an array of {name, type, len, dec} arrays */
+createdbf: procedure = .int
+  arg fname = .string, stru = .int
+  fn = dbfname(fname)
+  nfl = arrlen(stru)
+  rl = 1
+  hasmemo = 0
+  h = ''
+  do f = 1 to nfl
+    e = arrget(stru, f)
+    if isarr(e) = 0 | arrlen(e) < 4 then return argerr('DBCREATE')
+    nm = upper(sarg(arrget(e, 1)))
+    ty = upper(left(sarg(arrget(e, 2)), 1))
+    ln = iarg(arrget(e, 3), 10)
+    dc = iarg(arrget(e, 4), 0)
+    if ty == 'D' then ln = 8
+    if ty == 'L' then ln = 1
+    if ty == 'M' then do
+      ln = 10
+      hasmemo = 1
+    end
+    h = h || left(nm, 10, '00'x) || '00'x || ty || copies('00'x, 4) || d2c(ln) || d2c(dc) || copies('00'x, 14)
+    rl = rl + ln
+  end
+  hdr = 32 + nfl * 32 + 1
+  ver = 3
+  if hasmemo = 1 then ver = 131
+  head = d2c(ver) || d2c(26) || d2c(1) || d2c(1) || leb(0, 4) || leb(hdr, 2) || leb(rl, 2) || copies('00'x, 20) || h || '0d'x
+  junk = putbytes(fn, head || '1a'x)
+  if hasmemo = 1 then do
+    mf = changestr('.dbf', fn, '.dbt')
+    if mf == fn then mf = fn || '.dbt'
+    junk = putbytes(mf, leb(1, 4) || copies('00'x, 508))
+  end
+  return 1
+
+/* ---------------------------------------------------------- navigation */
+passes: procedure = .int
+  /* does the current record of area a pass SET DELETED and the filter? */
+  arg a = .int
+  if setdeleted = 1 then do
+    if substr(recs[ridx(a, wa_recno[a])], 1, 1) = '*' then return 0
+  end
+  fnode = wa_filter[a]
+  if fnode > 0 then do
+    old = curarea
+    curarea = a
+    c = evalnode(fnode)
+    curarea = old
+    if c <> 2 then return 0
+  end
+  return 1
+
+setrec: procedure = .void
+  arg a = .int, r = .int
+  if r < 1 | r > wa_nrec[a] then do
+    wa_eof[a] = 1
+    wa_recno[a] = wa_nrec[a] + 1
+    return
+  end
+  wa_eof[a] = 0
+  wa_recno[a] = r
+  return
+
+/* position on ordered index entry p (or eof if out of range) */
+setipos: procedure = .void
+  arg a = .int, p = .int
+  id = wa_order[a]
+  if p < 1 | p > ix_len[id] then do
+    wa_eof[a] = 1
+    wa_ipos[a] = ix_len[id] + 1
+    wa_recno[a] = wa_nrec[a] + 1
+    return
+  end
+  wa_ipos[a] = p
+  wa_eof[a] = 0
+  wa_recno[a] = ixr[ix_start[id] + p - 1]
+  return
+
+movenext: procedure = .void
+  /* one step forward in the active order, ignoring filters */
+  arg a = .int
+  id = wa_order[a]
+  if id = 0 then call setrec a, wa_recno[a] + 1
+  else call setipos a, wa_ipos[a] + 1
+  return
+
+moveprev: procedure = .void
+  arg a = .int
+  id = wa_order[a]
+  if id = 0 then do
+    if wa_recno[a] <= 1 then do
+      wa_bof[a] = 1
+      wa_eof[a] = 0
+      wa_recno[a] = 1
+      if wa_nrec[a] = 0 then wa_eof[a] = 1
+      return
+    end
+    call setrec a, wa_recno[a] - 1
+  end
+  else do
+    p = wa_ipos[a] - 1
+    if wa_eof[a] = 1 then p = ix_len[id]
+    if p < 1 then do
+      wa_bof[a] = 1
+      call setipos a, 1
+      if ix_len[id] = 0 then wa_eof[a] = 1
+      return
+    end
+    call setipos a, p
+  end
+  return
+
+dbgotop: procedure = .void
+  arg a = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  wa_bof[a] = 0
+  id = wa_order[a]
+  if id = 0 then call setrec a, 1
+  else call setipos a, 1
+  do while wa_eof[a] = 0
+    if passes(a) = 1 then leave
+    call movenext a
+  end
+  if wa_nrec[a] = 0 | wa_eof[a] = 1 then wa_bof[a] = 1
+  call relsync a
+  return
+
+dbgobottom: procedure = .void
+  arg a = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  wa_bof[a] = 0
+  id = wa_order[a]
+  if id = 0 then call setrec a, wa_nrec[a]
+  else call setipos a, ix_len[id]
+  do while wa_eof[a] = 0
+    if passes(a) = 1 then leave
+    call moveprev a
+    if wa_bof[a] = 1 then do
+      wa_eof[a] = 1
+      wa_recno[a] = wa_nrec[a] + 1
+    end
+  end
+  if wa_nrec[a] = 0 then wa_bof[a] = 1
+  call relsync a
+  return
+
+dbgoto: procedure = .void
+  arg a = .int, r = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  wa_bof[a] = 0
+  if r < 1 | r > wa_nrec[a] then do
+    wa_eof[a] = 1
+    wa_recno[a] = wa_nrec[a] + 1
+    return
+  end
+  wa_eof[a] = 0
+  wa_recno[a] = r
+  id = wa_order[a]
+  if id > 0 then wa_ipos[a] = ixfind(id, a, r)
+  call relsync a
+  return
+
+dbskip: procedure = .void
+  arg a = .int, n = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  if n = 0 then return
+  if n > 0 then do
+    wa_bof[a] = 0
+    do k = 1 to n
+      if wa_eof[a] = 1 then leave
+      call movenext a
+      do while wa_eof[a] = 0
+        if passes(a) = 1 then leave
+        call movenext a
+      end
+    end
+  end
+  else do
+    do k = 1 to 0 - n
+      call moveprev a
+      if wa_bof[a] = 1 then do
+        /* hit the top: stay on the first visible record */
+        do while wa_eof[a] = 0
+          if passes(a) = 1 then leave
+          call movenext a
+        end
+        leave
+      end
+      do while passes(a) = 0
+        call moveprev a
+        if wa_bof[a] = 1 then do
+          do while wa_eof[a] = 0
+            if passes(a) = 1 then leave
+            call movenext a
+          end
+          leave
+        end
+      end
+    end
+  end
+  call relsync a
+  return
+
+/* append a blank record */
+dbappend: procedure = .void
+  arg a = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  if wa_ro[a] = 1 then do
+    junk = rterr('DBFNTX', 1021, 'Read only', wa_alias[a])
+    return
+  end
+  n = wa_nrec[a] + 1
+  recs[ridx(a, n)] = wa_blank[a]
+  wa_nrec[a] = n
+  wa_recno[a] = n
+  wa_eof[a] = 0
+  wa_bof[a] = 0
+  wa_dirty[a] = 1
+  if wa_nix[a] > 0 then call keysappend a, n
+  call relsync a
+  return
+
+dbdelete: procedure = .void
+  arg a = .int, flag = .int
+  if wa_used[a] = 0 then do
+    junk = noarea()
+    return
+  end
+  r = wa_recno[a]
+  if wa_eof[a] = 1 | r < 1 | r > wa_nrec[a] then return
+  k = ridx(a, r)
+  c = ' '
+  if flag = 1 then c = '*'
+  recs[k] = c || substr(recs[k], 2)
+  wa_dirty[a] = 1
+  return
+
+isdeleted: procedure = .int
+  arg a = .int
+  r = wa_recno[a]
+  if wa_eof[a] = 1 | r < 1 | r > wa_nrec[a] then return 0
+  if substr(recs[ridx(a, r)], 1, 1) = '*' then return 1
+  return 0
+
+dbpack: procedure = .void
+  arg a = .int
+  n = 0
+  do r = 1 to wa_nrec[a]
+    s = recs[ridx(a, r)]
+    if substr(s, 1, 1) <> '*' then do
+      n = n + 1
+      recs[ridx(a, n)] = s
+    end
+  end
+  do r = n + 1 to wa_nrec[a]
+    recs[ridx(a, r)] = ''
+  end
+  wa_nrec[a] = n
+  wa_dirty[a] = 1
+  call reindexall a
+  call dbgotop a
+  return
+
+dbzap: procedure = .void
+  arg a = .int
+  do r = 1 to wa_nrec[a]
+    recs[ridx(a, r)] = ''
+  end
+  wa_nrec[a] = 0
+  wa_dirty[a] = 1
+  call reindexall a
+  call dbgotop a
+  return
+
+/* ---------------------------------------------------------------- indexes */
+evalkey: procedure = .int
+  arg a = .int, id = .int, r = .int
+  old = curarea
+  oldrec = wa_recno[a]
+  oldeof = wa_eof[a]
+  curarea = a
+  wa_recno[a] = r
+  wa_eof[a] = 0
+  v = evalnode(ix_node[id])
+  wa_recno[a] = oldrec
+  wa_eof[a] = oldeof
+  curarea = old
+  return v
+
+/* ordering of two index entries (key, recno) */
+ixcmp: procedure = .int
+  arg id = .int, k1 = .int, r1 = .int, k2 = .int, r2 = .int
+  c = cmpv(k1, k2)
+  if c = 2 then c = 0
+  if ix_desc[id] = 1 then c = 0 - c
+  if c <> 0 then return c
+  if r1 < r2 then return -1
+  if r1 > r2 then return 1
+  return 0
+
+/* position where (key, recno) belongs: first entry that is >= it */
+ixlower: procedure = .int
+  arg id = .int, k = .int, r = .int
+  lo = 1
+  hi = ix_len[id] + 1
+  s = ix_start[id]
+  do while lo < hi
+    mid = (lo + hi) / 2
+    if ixcmp(id, ixk[s + mid - 1], ixr[s + mid - 1], k, r) < 0 then lo = mid + 1
+    else hi = mid
+  end
+  return lo
+
+ixfind: procedure = .int
+  arg id = .int, a = .int, r = .int
+  k = evalkey(a, id, r)
+  p = ixlower(id, k, r)
+  s = ix_start[id]
+  if p <= ix_len[id] then do
+    if ixr[s + p - 1] = r then return p
+  end
+  /* fall back to a scan */
+  do p = 1 to ix_len[id]
+    if ixr[s + p - 1] = r then return p
+  end
+  return ix_len[id] + 1
+
+ixinsert: procedure = .void
+  arg id = .int, k = .int, r = .int
+  n = ix_len[id]
+  if n >= ix_cap[id] then do
+    ncap = n * 2 + 64
+    nsta = nixpool + 1
+    os = ix_start[id]
+    do i = 0 to n - 1
+      ixk[nsta + i] = ixk[os + i]
+      ixr[nsta + i] = ixr[os + i]
+    end
+    ix_start[id] = nsta
+    ix_cap[id] = ncap
+    nixpool = nixpool + ncap
+  end
+  p = ixlower(id, k, r)
+  s = ix_start[id]
+  do i = n to p by -1
+    ixk[s + i] = ixk[s + i - 1]
+    ixr[s + i] = ixr[s + i - 1]
+  end
+  ixk[s + p - 1] = k
+  ixr[s + p - 1] = r
+  ix_len[id] = n + 1
+  ix_dirty[id] = 1
+  return
+
+ixremove: procedure = .void
+  arg id = .int, p = .int
+  n = ix_len[id]
+  s = ix_start[id]
+  do i = p to n - 1
+    ixk[s + i - 1] = ixk[s + i]
+    ixr[s + i - 1] = ixr[s + i]
+  end
+  ix_len[id] = n - 1
+  ix_dirty[id] = 1
+  return
+
+okeys = .int[]
+keysbefore: procedure = .void
+  arg a = .int, r = .int
+  do j = 1 to wa_nix[a]
+    id = waix[(a - 1) * 8 + j]
+    okeys[j] = evalkey(a, id, r)
+  end
+  return
+
+keysafter: procedure = .void
+  arg a = .int, r = .int
+  do j = 1 to wa_nix[a]
+    id = waix[(a - 1) * 8 + j]
+    nk = evalkey(a, id, r)
+    ok = okeys[j]
+    if ixcmp(id, ok, r, nk, r) <> 0 then do
+      p = ixlower(id, ok, r)
+      s = ix_start[id]
+      if p <= ix_len[id] then do
+        if ixr[s + p - 1] = r then call ixremove id, p
+      end
+      call ixinsert id, nk, r
+      if wa_order[a] = id then wa_ipos[a] = ixfind(id, a, r)
+    end
+  end
+  return
+
+keysappend: procedure = .void
+  arg a = .int, r = .int
+  do j = 1 to wa_nix[a]
+    id = waix[(a - 1) * 8 + j]
+    k = evalkey(a, id, r)
+    call ixinsert id, k, r
+    if wa_order[a] = id then wa_ipos[a] = ixfind(id, a, r)
+  end
+  return
+
+/* build the index id from scratch */
+ixbuild: procedure = .void
+  arg id = .int
+  a = ix_area[id]
+  ix_len[id] = 0
+  ix_cap[id] = wa_nrec[a] + 64
+  ix_start[id] = nixpool + 1
+  nixpool = nixpool + ix_cap[id]
+  /* collect then sort by merge sort on (key, recno) */
+  n = 0
+  s = ix_start[id]
+  do r = 1 to wa_nrec[a]
+    ok = 1
+    if ix_for[id] > 0 then do
+      old = curarea
+      oldrec = wa_recno[a]
+      curarea = a
+      wa_recno[a] = r
+      wa_eof[a] = 0
+      c = evalnode(ix_for[id])
+      wa_recno[a] = oldrec
+      curarea = old
+      if c <> 2 then ok = 0
+    end
+    if ok = 1 then do
+      k = evalkey(a, id, r)
+      if ctl <> 0 then return
+      n = n + 1
+      ixk[s + n - 1] = k
+      ixr[s + n - 1] = r
+    end
+  end
+  ix_len[id] = n
+  call ixsort id
+  if ix_uniq[id] = 1 then call ixunique id
+  ix_dirty[id] = 1
+  return
+
+ixsort: procedure = .void
+  arg id = .int
+  n = ix_len[id]
+  s = ix_start[id]
+  if n < 2 then return
+  tk2 = nixpool + 1
+  nixpool = nixpool + 2 * n
+  tr2 = tk2 + n
+  w = 1
+  do while w < n
+    i = 0
+    do while i < n
+      lo = i
+      mid = i + w
+      if mid > n then mid = n
+      hi = i + 2 * w
+      if hi > n then hi = n
+      p = lo
+      q = mid
+      k = lo
+      do while p < mid & q < hi
+        if ixcmp(id, ixk[s + q], ixr[s + q], ixk[s + p], ixr[s + p]) < 0 then do
+          ixk[tk2 + k] = ixk[s + q]
+          ixr[tk2 + k] = ixr[s + q]
+          q = q + 1
+        end
+        else do
+          ixk[tk2 + k] = ixk[s + p]
+          ixr[tk2 + k] = ixr[s + p]
+          p = p + 1
+        end
+        k = k + 1
+      end
+      do while p < mid
+        ixk[tk2 + k] = ixk[s + p]
+        ixr[tk2 + k] = ixr[s + p]
+        p = p + 1
+        k = k + 1
+      end
+      do while q < hi
+        ixk[tk2 + k] = ixk[s + q]
+        ixr[tk2 + k] = ixr[s + q]
+        q = q + 1
+        k = k + 1
+      end
+      i = i + 2 * w
+    end
+    do j = 0 to n - 1
+      ixk[s + j] = ixk[tk2 + j]
+      ixr[s + j] = ixr[tk2 + j]
+    end
+    w = w * 2
+  end
+  return
+
+ixunique: procedure = .void
+  arg id = .int
+  n = ix_len[id]
+  s = ix_start[id]
+  m = 0
+  do i = 0 to n - 1
+    if m = 0 then dup = 0
+    else if cmpv(ixk[s + m - 1], ixk[s + i]) = 0 then dup = 1
+    else dup = 0
+    if dup = 0 then do
+      ixk[s + m] = ixk[s + i]
+      ixr[s + m] = ixr[s + i]
+      m = m + 1
+    end
+  end
+  ix_len[id] = m
+  return
+
+ixfilename: procedure = .string
+  arg f = .string
+  k = lastpos('/', f)
+  b = f
+  if k > 0 then b = substr(f, k + 1)
+  if pos('.', b) = 0 then return f || '.xdx'
+  return f
+
+/* INDEX ON expr TO file : creates and activates the index in area a */
+createindex: procedure = .int
+  arg a = .int, keynode = .int, fname = .string, fornode = .int, fl = .int, keytext = .string, fortext = .string
+  if wa_nix[a] >= 8 then return rterr('DBFNTX', 1011, 'Too many indexes', wa_alias[a])
+  nix = nix + 1
+  id = nix
+  ix_area[id] = a
+  ix_node[id] = keynode
+  ix_text[id] = keytext
+  ix_fortext[id] = fortext
+  ix_for[id] = fornode
+  ix_uniq[id] = fl % 2
+  ix_desc[id] = (fl / 2) % 2
+  ix_file[id] = ''
+  if fname <> '' then ix_file[id] = ixfilename(fname)
+  ix_name[id] = upper(dbfstem(fname))
+  ix_dirty[id] = 1
+  ixk[nixpool + 1] = 0
+  call ixbuild id
+  if ctl <> 0 then return 0
+  wa_nix[a] = wa_nix[a] + 1
+  waix[(a - 1) * 8 + wa_nix[a]] = id
+  wa_order[a] = id
+  call ixwrite id
+  call dbgotop a
+  return id
+
+/* index files hold the key text, the flags and the record order */
+ixwrite: procedure = .void
+  arg id = .int
+  if ix_file[id] == '' then return
+  a = ix_area[id]
+  t = 'XDX1' || '0a'x || ix_text[id] || '0a'x || ix_fortext[id] || '0a'x || ix_uniq[id] || ' ' || ix_desc[id] || ' ' || wa_nrec[a] || '0a'x
+  chunk = ''
+  body = ''
+  s = ix_start[id]
+  do i = 0 to ix_len[id] - 1
+    chunk = chunk || ixr[s + i] || ' '
+    if i % 200 = 199 then do
+      body = body || chunk
+      chunk = ''
+    end
+  end
+  junk = putbytes(ix_file[id], t || body || chunk)
+  ix_dirty[id] = 0
+  return
+
+flushindexes: procedure = .void
+  arg a = .int
+  do j = 1 to wa_nix[a]
+    id = waix[(a - 1) * 8 + j]
+    if ix_dirty[id] = 1 then call ixwrite id
+  end
+  return
+
+reindexall: procedure = .void
+  arg a = .int
+  do j = 1 to wa_nix[a]
+    id = waix[(a - 1) * 8 + j]
+    call ixbuild id
+    if ix_file[id] <> '' then call ixwrite id
+  end
+  if wa_order[a] > 0 then wa_ipos[a] = 1
+  return
+
+/* attach an existing index file */
+openindex: procedure = .int
+  arg a = .int, fname = .string
+  fn = ixfilename(fname)
+  if fileexists(fn) = 0 then return rterr('DBFNTX', 1001, 'Open error', fn)
+  t = loadtext(fn, '0a'x, 'noraise')
+  p1 = pos('0a'x, t)
+  p2 = pos('0a'x, t, p1 + 1)
+  p3 = pos('0a'x, t, p2 + 1)
+  p4 = pos('0a'x, t, p3 + 1)
+  keytext = substr(t, p1 + 1, p2 - p1 - 1)
+  fortext = substr(t, p2 + 1, p3 - p2 - 1)
+  flags = substr(t, p3 + 1, p4 - p3 - 1)
+  node = compileexpr(keytext)
+  if node = 0 then return rterr('DBFNTX', 1004, 'Index key error', keytext)
+  fnode = 0
+  if fortext <> '' then fnode = compileexpr(fortext)
+  fl = (word(flags, 1) as .int) + 2 * (word(flags, 2) as .int)
+  id = createindex(a, node, fn, fnode, fl, keytext, fortext)
+  return id
+
+/* ------------------------------------------------------------------- seek */
+cmpseek: procedure = .int
+  arg k = .int, v = .int
+  if isstr(k) = 1 & isstr(v) = 1 then do
+    c = strcmp(left(cstr[k], length(cstr[v])), cstr[v])
+    return c
+  end
+  c = cmpv(k, v)
+  if c = 2 then return 0
+  return c
+
+dbseek: procedure = .int
+  arg a = .int, v = .int, soft = .int
+  if wa_used[a] = 0 then return noarea()
+  id = wa_order[a]
+  if id = 0 then return rterr('DBFNTX', 2001, 'No active order', wa_alias[a])
+  s = ix_start[id]
+  lo = 1
+  hi = ix_len[id] + 1
+  do while lo < hi
+    mid = (lo + hi) / 2
+    c = cmpseek(ixk[s + mid - 1], v)
+    if ix_desc[id] = 1 then c = 0 - c
+    if c < 0 then lo = mid + 1
+    else hi = mid
+  end
+  wa_bof[a] = 0
+  found = 0
+  p = lo
+  /* skip entries that are filtered out */
+  do while p <= ix_len[id]
+    call setipos a, p
+    c = cmpseek(ixk[s + p - 1], v)
+    if c <> 0 then leave
+    if passes(a) = 1 then do
+      found = 1
+      leave
+    end
+    p = p + 1
+  end
+  if found = 0 then do
+    if soft = 1 | setsoft = 1 then do
+      call setipos a, p
+      do while wa_eof[a] = 0
+        if passes(a) = 1 then leave
+        call movenext a
+      end
+    end
+    else do
+      wa_eof[a] = 1
+      wa_recno[a] = wa_nrec[a] + 1
+      wa_ipos[a] = ix_len[id] + 1
+    end
+  end
+  wa_found[a] = found
+  call relsync a
+  return found
+
+/* ------------------------------------------------------------- relations */
+relsync: procedure = .void
+  arg a = .int
+  do j = 1 to wa_nrel[a]
+    ch = wa_relchild[(a - 1) * 8 + j]
+    kn = wa_relkey[(a - 1) * 8 + j]
+    if wa_used[ch] = 0 then iterate
+    old = curarea
+    curarea = a
+    v = evalnode(kn)
+    curarea = old
+    if wa_order[ch] > 0 then junk = dbseek(ch, v, 0)
+    else if isnum(v) = 1 then call dbgoto ch, toint(numval(v))
+  end
+  return

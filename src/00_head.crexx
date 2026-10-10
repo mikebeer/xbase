@@ -1,0 +1,21 @@
+/*
+ * xbase.crexx - an xBase (Harbour / Clipper) interpreter written in CREXX Level B
+ *
+ * Usage:   rxvm xbase.rxbin -a program.prg [arguments ...]
+ *
+ * The program is tokenized, parsed into a tree and interpreted. DBF tables,
+ * indexes and a line-oriented console are built in.
+ *
+ * Data model: every xBase value is an integer "reference".
+ *   reference < 0   a whole number n (width 10): n >= 0 is -(2n+1), n < 0 is 2n
+ *   reference 0     NIL         1  .F.        2  .T.
+ *   reference > 2   a cell in the heap arrays ctag cint ca1 ca2 cnum cstr
+ * Cell tags: 1 number, 2 string, 3 logical, 4 date, 5 array, 6 hash,
+ *   7 code block, 8 object, 9 variable reference.
+ */
+options levelb
+namespace xbase expose x
+
+import rxfnsb
+
+arg argv = .string[]

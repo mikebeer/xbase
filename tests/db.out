@@ -1,0 +1,38 @@
+Records:          6 Fields:          5
+Mike                 35   3001.50 01/03/20 .F.
+         2 Anna                 30
+         5 Beth                 45
+         4 Carl                 40
+         6 Dora                 50
+         3 Mike                 35
+         1 Zed                  25
+Found: .T. Mike        
+Found: .F. .T.
+Count>30:          4
+         21010.50        225
+            37.50
+Last: Zed          .T.
+Bof: .T. Anna        
+Mike        
+      5 Beth                 45
+      6 Dora                 50
+.T. Mike        
+.F.
+         5
+Anna                 31
+Anna                  1Carl  Beth  Dora  
+
+         5 Anna         Upper(Name)
+Structure for database: emp.dbf
+Number of data records:       5
+Field  Field Name  Type       Width    Dec
+    1  NAME        Character     12    
+    2  AGE         Numeric        3      0
+    3  SALARY      Numeric        9      2
+    4  HIRED       Date           8    
+    5  ACTIVE      Logical        1    
+** Total **                   34
+        99
+         1 .F.
+STAFF Anna         AGE          3
+.F.

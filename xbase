@@ -1,0 +1,17 @@
+#!/bin/sh
+# xbase - run an xBase (Harbour/Clipper style) program
+#
+#   xbase program.prg [arguments ...]
+#
+# Environment: CREXX_BIN = directory with rxvm (default: found via PATH)
+HERE=$(cd "$(dirname "$0")" && pwd)
+BIN=${CREXX_BIN:-$(dirname "$(command -v rxvm)")}
+if [ ! -f "$HERE/build/xbase.rxbin" ]; then
+  echo "xbase: run 'make' first" >&2
+  exit 2
+fi
+if [ $# -eq 0 ]; then
+  echo "usage: xbase program.prg [arguments]" >&2
+  exit 2
+fi
+exec "$BIN/rxvm" "$HERE/build/xbase.rxbin" -a "$@"

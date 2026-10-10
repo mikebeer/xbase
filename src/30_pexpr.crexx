@@ -1,0 +1,722 @@
+/* ===================================================================== */
+/*                      PARSER: SCOPES AND EXPRESSIONS                   */
+/* ===================================================================== */
+perrflag = 0
+perrmsg = ''
+macrodepth = 0
+
+perr: procedure = .void
+  arg msg = .string
+  if perrflag = 0 then do
+    perrflag = 1
+    perrmsg = msg
+    perrline = tl[tp]
+  end
+  tp = ntok
+  return
+perrline = 0
+
+curk: procedure = .int
+  return tk[tp]
+
+adv: procedure = .void
+  if tp < ntok then tp = tp + 1
+  return
+
+isop: procedure = .int
+  arg s = .string
+  if tk[tp] = E_OP then do
+    if ts[tp] == s then return 1
+  end
+  return 0
+
+isword: procedure = .int
+  arg s = .string
+  if tk[tp] = E_IDENT then do
+    if ts[tp] == s then return 1
+  end
+  return 0
+
+nextisop: procedure = .int
+  arg s = .string
+  if tp < ntok then do
+    if tk[tp + 1] = E_OP then do
+      if ts[tp + 1] == s then return 1
+    end
+  end
+  return 0
+
+nextisword: procedure = .int
+  arg s = .string
+  if tp < ntok then do
+    if tk[tp + 1] = E_IDENT then do
+      if ts[tp + 1] == s then return 1
+    end
+  end
+  return 0
+
+expectop: procedure = .void
+  arg s = .string
+  if isop(s) = 1 then call adv
+  else call perr 'Syntax error: expected ' || s || ' near ' || ts[tp]
+  return
+
+skipeol: procedure = .void
+  do while tk[tp] = E_EOL
+    call adv
+  end
+  return
+
+atend: procedure = .int
+  if tk[tp] = E_EOL | tk[tp] = E_EOF then return 1
+  return 0
+
+/* ------------------------------------------------------------- contexts */
+newctx: procedure = .int
+  arg kind = .int, par = .int
+  ncx = ncx + 1
+  cxkind[ncx] = kind
+  cxpar[ncx] = par
+  cxnslot[ncx] = 0
+  cxncap[ncx] = 0
+  return ncx
+
+declvar: procedure = .int
+  arg sym = .int, kind = .int, idx = .int
+  nvar = nvar + 1
+  vname[nvar] = sym
+  vctx[nvar] = curcx
+  vkind[nvar] = kind
+  vidx[nvar] = idx
+  vsrck[nvar] = 0
+  vsrci[nvar] = 0
+  return nvar
+
+newslot: procedure = .int
+  cxnslot[curcx] = cxnslot[curcx] + 1
+  return cxnslot[curcx]
+
+findvarin: procedure = .int
+  arg cx = .int, sym = .int
+  i = nvar
+  do while i >= 1
+    if vname[i] = sym then do
+      if vctx[i] = cx then return i
+    end
+    i = i - 1
+  end
+  return 0
+
+rk = 0
+ri = 0
+resolvein: procedure = .int
+  arg cx = .int, sym = .int
+  v = findvarin(cx, sym)
+  if v > 0 then do
+    rk = vkind[v]
+    ri = vidx[v]
+    return 1
+  end
+  if cxkind[cx] = 1 then do
+    par = cxpar[cx]
+    if resolvein(par, sym) = 1 then do
+      if rk = 2 then return 1
+      sk = rk
+      si = ri
+      if sk = 3 then sk = 2
+      idx = cxncap[cx] + 1
+      cxncap[cx] = idx
+      nvar = nvar + 1
+      vname[nvar] = sym
+      vctx[nvar] = cx
+      vkind[nvar] = 3
+      vidx[nvar] = idx
+      vsrck[nvar] = sk
+      vsrci[nvar] = si
+      rk = 3
+      ri = idx
+      return 1
+    end
+  end
+  return 0
+
+/* a variable reference node, or 0 if the name is not a LOCAL or STATIC */
+resolve: procedure = .int
+  arg sym = .int
+  if curcx > 0 then do
+    if resolvein(curcx, sym) = 1 then do
+      if rk = 1 then return mknode(K_LOCAL, ri, 0, 0)
+      if rk = 2 then return mknode(K_STATIC, ri, 0, 0)
+      return mknode(K_CAPV, ri, 0, 0)
+    end
+  end
+  do i = nmst to 1 by -1
+    if mstname[i] = sym then return mknode(K_STATIC, mstidx[i], 0, 0)
+  end
+  return 0
+
+constnode: procedure = .int
+  arg v = .int
+  return mknode(K_CONST, v, 0, 0)
+
+/* ------------------------------------------------------------ expressions */
+/* link a list: returns the head; appends via tail */
+parseexpr: procedure = .int
+  return parseassign()
+
+isassignable: procedure = .int
+  arg n = .int
+  k = nt[n]
+  if k = K_LOCAL | k = K_CAPV | k = K_STATIC | k = K_IDENT | k = K_MEMVAR | k = K_FIELDX | k = K_ALIASFLD | k = K_INDEX | k = K_MACRO then return 1
+  if k = K_SEND then do
+    if ne[n] = 1 then return 1
+  end
+  return 0
+
+parseassign: procedure = .int
+  lhs = parseor()
+  if tk[tp] <> E_OP then return lhs
+  op = ts[tp]
+  if op == ':=' then do
+    if isassignable(lhs) = 0 then do
+      call perr 'Syntax error: invalid assignment target'
+      return lhs
+    end
+    call adv
+    rhs = parseassign()
+    return mknode(K_ASSIGN, lhs, rhs, 0)
+  end
+  bk = 0
+  if op == '+=' then bk = K_ADD
+  else if op == '-=' then bk = K_SUB
+  else if op == '*=' then bk = K_MUL
+  else if op == '/=' then bk = K_DIV
+  else if op == '%=' then bk = K_MOD
+  else if op == '^=' | op == '**=' then bk = K_POW
+  if bk = 0 then return lhs
+  if isassignable(lhs) = 0 then do
+    call perr 'Syntax error: invalid assignment target'
+    return lhs
+  end
+  call adv
+  rhs = parseassign()
+  return mknode(K_ASSIGN, lhs, mknode(bk, lhs, rhs, 0), 0)
+
+parseor: procedure = .int
+  l = parseand()
+  do while isop('.OR.') = 1
+    call adv
+    r = parseand()
+    l = mknode(K_OR, l, r, 0)
+  end
+  return l
+
+parseand: procedure = .int
+  l = parsenot()
+  do while isop('.AND.') = 1
+    call adv
+    r = parsenot()
+    l = mknode(K_AND, l, r, 0)
+  end
+  return l
+
+parsenot: procedure = .int
+  if isop('.NOT.') = 1 | isop('!') = 1 then do
+    call adv
+    e = parsenot()
+    return mknode(K_NOT, e, 0, 0)
+  end
+  return parsecmp()
+
+parsecmp: procedure = .int
+  l = parseadd()
+  do forever
+    if tk[tp] <> E_OP then leave
+    op = ts[tp]
+    k = 0
+    if op == '=' then k = K_EQ
+    else if op == '==' then k = K_EXEQ
+    else if op == '!=' | op == '<>' | op == '#' then k = K_NE
+    else if op == '<' then k = K_LT
+    else if op == '<=' then k = K_LE
+    else if op == '>' then k = K_GT
+    else if op == '>=' then k = K_GE
+    else if op == '$' then k = K_IN
+    if k = 0 then leave
+    call adv
+    r = parseadd()
+    l = mknode(k, l, r, 0)
+  end
+  return l
+
+parseadd: procedure = .int
+  l = parsemul()
+  do forever
+    if tk[tp] <> E_OP then leave
+    op = ts[tp]
+    if op == '+' then k = K_ADD
+    else if op == '-' then k = K_SUB
+    else leave
+    call adv
+    r = parsemul()
+    l = mknode(k, l, r, 0)
+  end
+  return l
+
+parsemul: procedure = .int
+  l = parseunary()
+  do forever
+    if tk[tp] <> E_OP then leave
+    op = ts[tp]
+    if op == '*' then k = K_MUL
+    else if op == '/' then k = K_DIV
+    else if op == '%' then k = K_MOD
+    else leave
+    call adv
+    r = parseunary()
+    l = mknode(k, l, r, 0)
+  end
+  return l
+
+parseunary: procedure = .int
+  if tk[tp] = E_OP then do
+    op = ts[tp]
+    if op == '-' then do
+      call adv
+      e = parseunary()
+      /* fold literal numbers */
+      if nt[e] = K_CONST then do
+        v = na[e]
+        if isnum(v) = 1 then do
+          if v < 0 then return constnode(mkint(0 - intval(v)))
+          nv2 = newcell(T_NUM)
+          cnum[nv2] = 0.0 - cnum[v]
+          cint[nv2] = cint[v]
+          return constnode(nv2)
+        end
+      end
+      return mknode(K_NEG, e, 0, 0)
+    end
+    if op == '+' then do
+      call adv
+      return parseunary()
+    end
+    if op == '++' then do
+      call adv
+      e = parseunary()
+      return mknode(K_PREINC, e, 0, 0)
+    end
+    if op == '--' then do
+      call adv
+      e = parseunary()
+      return mknode(K_PREDEC, e, 0, 0)
+    end
+  end
+  return parsepow()
+
+parsepow: procedure = .int
+  l = parsepostfix()
+  do while isop('^') = 1 | isop('**') = 1
+    call adv
+    r = parseunary()
+    l = mknode(K_POW, l, r, 0)
+  end
+  return l
+
+/* argument list inside ( ); the opening ( is consumed. Returns head, sets argcount */
+argcount = 0
+parseargs: procedure = .int
+  head = 0
+  tail = 0
+  cnt = 0
+  if isop(')') = 1 then do
+    call adv
+    argcount = 0
+    return 0
+  end
+  do forever
+    if isop(',') = 1 | isop(')') = 1 then e = constnode(0)
+    else e = parseexpr()
+    cnt = cnt + 1
+    if head = 0 then head = e
+    else nx[tail] = e
+    tail = e
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  call expectop ')'
+  argcount = cnt
+  return head
+
+parsepostfix: procedure = .int
+  e = parseprimary()
+  do forever
+    if tk[tp] <> E_OP then leave
+    op = ts[tp]
+    if op == '[' then do
+      call adv
+      ix = parseexpr()
+      e = mknode(K_INDEX, e, ix, 0)
+      do while isop(',') = 1
+        call adv
+        ix = parseexpr()
+        e = mknode(K_INDEX, e, ix, 0)
+      end
+      call expectop ']'
+      iterate
+    end
+    if op == ':' then do
+      call adv
+      if tk[tp] <> E_IDENT then do
+        call perr 'Syntax error: message name expected'
+        return e
+      end
+      msg = tv[tp]
+      call adv
+      if isop('(') = 1 then do
+        call adv
+        args = parseargs()
+        cnt = argcount
+        e = mknode(K_SEND, e, msg, args)
+        nd[e] = cnt
+        ne[e] = 0
+      end
+      else do
+        e = mknode(K_SEND, e, msg, 0)
+        nd[e] = 0
+        ne[e] = 1
+      end
+      iterate
+    end
+    if op == '++' then do
+      call adv
+      e = mknode(K_POSTINC, e, 0, 0)
+      iterate
+    end
+    if op == '--' then do
+      call adv
+      e = mknode(K_POSTDEC, e, 0, 0)
+      iterate
+    end
+    leave
+  end
+  return e
+
+numconst: procedure = .int
+  arg t = .string
+  d = 0
+  p = pos('.', t)
+  if p > 0 then d = length(t) - p
+  if d = 0 & pos('E', upper(t)) = 0 & length(t) < 18 then do
+    n = t as .int
+    return mkint(n)
+  end
+  x = t as .float
+  w = length(t)
+  if w < 3 then w = 3
+  if pos('E', upper(t)) > 0 then do
+    d = 0
+    w = 10
+  end
+  c = newcell(T_NUM)
+  cnum[c] = x
+  cint[c] = w * 256 + d
+  return c
+
+ymd2jdn: procedure = .int
+  arg y = .int, m = .int, d = .int
+  a = (14 - m) / 12
+  yy = y + 4800 - a
+  mm = m + 12 * a - 3
+  return d + (153 * mm + 2) / 5 + 365 * yy + yy / 4 - yy / 100 + yy / 400 - 32045
+
+datelit: procedure = .int
+  arg t = .string
+  if length(t) < 8 then return mkdate(0)
+  y = substr(t, 1, 4) as .int
+  m = substr(t, 5, 2) as .int
+  d = substr(t, 7, 2) as .int
+  if y = 0 & m = 0 & d = 0 then return mkdate(0)
+  return mkdate(ymd2jdn(y, m, d))
+
+parseprimary: procedure = .int
+  k = tk[tp]
+  if k = E_NUM then do
+    v = numconst(ts[tp])
+    call adv
+    return constnode(v)
+  end
+  if k = E_STR then do
+    v = mkstr(ts[tp])
+    call adv
+    return constnode(v)
+  end
+  if k = E_LOG then do
+    v = 1
+    if ts[tp] == 'T' then v = 2
+    call adv
+    return constnode(v)
+  end
+  if k = E_DATE then do
+    v = datelit(ts[tp])
+    call adv
+    return constnode(v)
+  end
+  if k = E_IDENT then return parseident()
+  if k = E_OP then do
+    op = ts[tp]
+    if op == '(' then do
+      call adv
+      e = parseexpr()
+      call expectop ')'
+      if isop('->') = 1 then do
+        call adv
+        return parsealiased(e)
+      end
+      /* a parenthesised expression is never an assignment target */
+      return mknode(K_PLUS, e, 0, 0)
+    end
+    if op == '{' then return parsebrace()
+    if op == '@' then do
+      call adv
+      if tk[tp] = E_IDENT then do
+        sym = tv[tp]
+        if nextisop('(') = 0 then do
+          e = parsepostfix()
+          return mknode(K_REFX, e, 0, 0)
+        end
+        /* @Func() : function pointer */
+        call adv
+        call adv
+        call expectop ')'
+        return mknode(K_CODEBLOCK, sym, 0, 0)
+      end
+      e = parsepostfix()
+      return mknode(K_REFX, e, 0, 0)
+    end
+    if op == '&' then do
+      call adv
+      if isop('(') = 1 then do
+        call adv
+        e = parseexpr()
+        call expectop ')'
+        return mknode(K_MACRO, e, 0, 0)
+      end
+      if tk[tp] = E_IDENT then do
+        sym = tv[tp]
+        call adv
+        v = resolve(sym)
+        if v = 0 then v = mknode(K_IDENT, sym, 0, 0)
+        n = mknode(K_MACRO, v, 0, 0)
+        /* &var.text : trailing dot ends the macro name */
+        if isop('.') = 1 & tsp[tp] = 0 then do
+          call adv
+        end
+        return n
+      end
+      call perr 'Syntax error: macro operator'
+      return constnode(0)
+    end
+    if op == '::' then do
+      call adv
+      if tk[tp] <> E_IDENT then do
+        call perr 'Syntax error: message name expected after ::'
+        return constnode(0)
+      end
+      msg = tv[tp]
+      call adv
+      selfn = mknode(K_SELF, 0, 0, 0)
+      if isop(':') = 1 & tp < ntok then do
+        if tk[tp + 1] = E_IDENT then do
+          /* ::Class:Method( ) calls the method of that class on Self */
+          na[selfn] = 2
+          nb[selfn] = msg
+          call adv
+          msg = tv[tp]
+          call adv
+        end
+      end
+      if isop('(') = 1 then do
+        call adv
+        args = parseargs()
+        cnt = argcount
+        e = mknode(K_SEND, selfn, msg, args)
+        nd[e] = cnt
+        ne[e] = 0
+        return e
+      end
+      e = mknode(K_SEND, selfn, msg, 0)
+      nd[e] = 0
+      ne[e] = 1
+      return e
+    end
+  end
+  call perr 'Syntax error near ' || ts[tp]
+  return constnode(0)
+
+/* the thing after "alias->" : field name or (expression) */
+parsealiased: procedure = .int
+  arg al = .int
+  if tk[tp] = E_IDENT then do
+    sym = tv[tp]
+    call adv
+    n = mknode(K_ALIASFLD, al, sym, 0)
+    return n
+  end
+  if isop('(') = 1 then do
+    call adv
+    e = parseexpr()
+    call expectop ')'
+    return mknode(K_ALIASEXPR, al, e, 0)
+  end
+  call perr 'Syntax error after ->'
+  return constnode(0)
+
+parseident: procedure = .int
+  name = ts[tp]
+  sym = tv[tp]
+  call adv
+  if isop('->') = 1 then do
+    call adv
+    if name == 'M' | name == 'MEMVAR' then do
+      if tk[tp] = E_IDENT then do
+        s2 = tv[tp]
+        call adv
+        return mknode(K_MEMVAR, s2, 0, 0)
+      end
+    end
+    if name == 'FIELD' | name == '_FIELD' then do
+      if tk[tp] = E_IDENT then do
+        s2 = tv[tp]
+        call adv
+        return mknode(K_FIELDX, s2, 0, 0)
+      end
+    end
+    al = constnode(mkstr(name))
+    return parsealiased(al)
+  end
+  if isop('(') = 1 then do
+    call adv
+    args = parseargs()
+    cnt = argcount
+    if (name == 'IIF' | name == 'IF') & cnt = 3 then do
+      c1n = args
+      c2n = nx[c1n]
+      c3n = nx[c2n]
+      return mknode(K_IIF, c1n, c2n, c3n)
+    end
+    e = mknode(K_CALL, sym, args, cnt)
+    return e
+  end
+  if name == 'NIL' then return constnode(0)
+  if name == 'SELF' then return mknode(K_SELF, 0, 0, 0)
+  if name == 'SUPER' then return mknode(K_SELF, 1, 0, 0)
+  v = resolve(sym)
+  if v > 0 then return v
+  return mknode(K_IDENT, sym, 0, 0)
+
+/* { ... } : array, hash or code block */
+parsebrace: procedure = .int
+  call adv
+  if isop('|') = 1 then return parseblock()
+  /* empty hash {=>} */
+  if isop('=>') = 1 then do
+    call adv
+    call expectop '}'
+    return mknode(K_HASHLIT, 0, 0, 0)
+  end
+  if isop('}') = 1 then do
+    call adv
+    return mknode(K_ARRAY, 0, 0, 0)
+  end
+  head = 0
+  tail = 0
+  cnt = 0
+  ishash = 0
+  do forever
+    e = parseexpr()
+    if cnt = 0 & isop('=>') = 1 then ishash = 1
+    if ishash = 1 then do
+      call expectop '=>'
+      v = parseexpr()
+      nx[e] = v
+      if head = 0 then head = e
+      else nx[tail] = e
+      tail = v
+    end
+    else do
+      if head = 0 then head = e
+      else nx[tail] = e
+      tail = e
+    end
+    cnt = cnt + 1
+    if isop(',') = 1 then do
+      call adv
+      iterate
+    end
+    leave
+  end
+  call expectop '}'
+  if ishash = 1 then return mknode(K_HASHLIT, head, cnt, 0)
+  return mknode(K_ARRAY, head, cnt, 0)
+
+parseblock: procedure = .int
+  /* current token is the opening | */
+  call adv
+  oldcx = curcx
+  cx = newctx(1, oldcx)
+  curcx = cx
+  np = 0
+  do while isop('|') = 0
+    if tk[tp] <> E_IDENT then do
+      call perr 'Syntax error in code block parameters'
+      curcx = oldcx
+      return constnode(0)
+    end
+    s = tv[tp]
+    call adv
+    np = np + 1
+    sl = newslot()
+    junk = declvar(s, 1, sl)
+    if isop(',') = 1 then call adv
+  end
+  call adv
+  head = 0
+  tail = 0
+  if isop('}') = 0 then do
+    do forever
+      e = parseexpr()
+      if head = 0 then head = e
+      else nx[tail] = e
+      tail = e
+      if isop(',') = 1 then do
+        call adv
+        iterate
+      end
+      leave
+    end
+  end
+  else head = constnode(0)
+  call expectop '}'
+  /* capture list */
+  chead = 0
+  ctail = 0
+  do i = 1 to cxncap[cx]
+    do j = nvar to 1 by -1
+      if vctx[j] = cx & vkind[j] = 3 & vidx[j] = i then do
+        cn = mknode(K_NOP, vsrck[j], vsrci[j], 0)
+        if chead = 0 then chead = cn
+        else nx[ctail] = cn
+        ctail = cn
+        leave
+      end
+    end
+  end
+  curcx = oldcx
+  b = mknode(K_BLOCK, head, np, cxnslot[cx])
+  nd[b] = chead
+  nf[b] = cxncap[cx]
+  return b

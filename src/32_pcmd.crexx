@@ -1,0 +1,582 @@
+/* ===================================================================== */
+/*                  PARSER: DATABASE AND CONSOLE COMMANDS                */
+/* ===================================================================== */
+mkcmd: procedure = .int
+  arg cmd = .int
+  return mknode(K_CMD, cmd, 0, 0)
+
+mkscoped: procedure = .int
+  arg cmd = .int
+  return mknode(K_SCOPED, cmd, 0, 0)
+
+/* scope, FOR and WHILE clauses; fills nf (kind) nd (n) nb (for) nc (while) */
+parsescope: procedure = .void
+  arg n = .int
+  do forever
+    if isword('ALL') = 1 then do
+      call adv
+      nf[n] = 1
+      iterate
+    end
+    if isword('NEXT') = 1 then do
+      call adv
+      nf[n] = 2
+      nd[n] = parseexpr()
+      iterate
+    end
+    if isword('RECORD') = 1 then do
+      call adv
+      nf[n] = 3
+      nd[n] = parseexpr()
+      iterate
+    end
+    if isword('REST') = 1 then do
+      call adv
+      nf[n] = 4
+      iterate
+    end
+    if isword('FOR') = 1 then do
+      call adv
+      nb[n] = parseexpr()
+      iterate
+    end
+    if isword('WHILE') = 1 then do
+      call adv
+      nc[n] = parseexpr()
+      iterate
+    end
+    leave
+  end
+  return
+
+parsecmd: procedure = .int
+  arg w = .string
+  if w == 'USE' then do
+    call adv
+    n = mkcmd(C_USE)
+    if atend() = 1 then return n
+    if isword('INDEX') = 0 & isword('ALIAS') = 0 & isword('NEW') = 0 then nb[n] = filearg()
+    fl = 0
+    do forever
+      if isword('INDEX') = 1 then do
+        call adv
+        h = filearg()
+        t = h
+        do while isop(',') = 1
+          call adv
+          x = filearg()
+          nx[t] = x
+          t = x
+        end
+        nd[n] = h
+        iterate
+      end
+      if isword('ALIAS') = 1 then do
+        call adv
+        nc[n] = aliasarg()
+        iterate
+      end
+      if isword('NEW') = 1 then do
+        call adv
+        fl = fl + 1
+        iterate
+      end
+      if isword('EXCLUSIVE') = 1 then do
+        call adv
+        iterate
+      end
+      if isword('SHARED') = 1 then do
+        call adv
+        iterate
+      end
+      if isword('READONLY') = 1 then do
+        call adv
+        fl = fl + 8
+        iterate
+      end
+      if isword('VIA') = 1 then do
+        call adv
+        junk = parseexpr()
+        iterate
+      end
+      leave
+    end
+    nf[n] = fl
+    return n
+  end
+  if w == 'SELECT' then do
+    call adv
+    n = mkcmd(C_SELECT)
+    nb[n] = aliasarg()
+    return n
+  end
+  if w == 'GO' | w == 'GOTO' then do
+    call adv
+    n = mkcmd(C_GO)
+    if isword('TOP') = 1 then do
+      call adv
+      nf[n] = 1
+    end
+    else if isword('BOTTOM') = 1 then do
+      call adv
+      nf[n] = 2
+    end
+    else do
+      if isword('RECORD') = 1 then call adv
+      nb[n] = parseexpr()
+    end
+    if isword('IN') = 1 then do
+      call adv
+      nc[n] = aliasarg()
+    end
+    return n
+  end
+  if w == 'SKIP' then do
+    call adv
+    n = mkcmd(C_SKIP)
+    if atend() = 0 & isword('ALIAS') = 0 & isword('IN') = 0 then nb[n] = parseexpr()
+    if isword('ALIAS') = 1 | isword('IN') = 1 then do
+      call adv
+      nc[n] = aliasarg()
+    end
+    return n
+  end
+  if w == 'SEEK' then do
+    call adv
+    n = mkcmd(C_SEEK)
+    nb[n] = parseexpr()
+    do forever
+      if isword('SOFTSEEK') = 1 then do
+        call adv
+        nf[n] = nf[n] + 1
+        iterate
+      end
+      if isword('LAST') = 1 then do
+        call adv
+        iterate
+      end
+      leave
+    end
+    return n
+  end
+  if w == 'APPEND' then do
+    call adv
+    n = mkcmd(C_APPEND)
+    if isword('BLANK') = 1 then do
+      call adv
+      nf[n] = 1
+      return n
+    end
+    if isword('FROM') = 1 then do
+      call adv
+      nf[n] = 2
+      nb[n] = filearg()
+      if isword('FOR') = 1 then do
+        call adv
+        nd[n] = parseexpr()
+      end
+      call skipline
+      return n
+    end
+    nf[n] = 1
+    return n
+  end
+  if w == 'DELETE' | w == 'RECALL' | w == 'COUNT' | w == 'SUM' | w == 'AVERAGE' | w == 'LIST' | w == 'DISPLAY' | w == 'LOCATE' | w == 'REPLACE' | w == 'COPY' | w == 'TOTAL' then
+    return parsescopedcmd(w)
+  if w == 'CONTINUE' then do
+    call adv
+    return mkcmd(C_CONTINUE)
+  end
+  if w == 'PACK' then do
+    call adv
+    return mkcmd(C_PACK)
+  end
+  if w == 'ZAP' then do
+    call adv
+    return mkcmd(C_ZAP)
+  end
+  if w == 'COMMIT' then do
+    call adv
+    return mkcmd(C_COMMIT)
+  end
+  if w == 'REINDEX' then do
+    call adv
+    return mkcmd(C_REINDEX)
+  end
+  if w == 'INDEX' then do
+    call adv
+    n = mkcmd(C_INDEX)
+    if isword('ON') = 1 then call adv
+    else call perr 'Syntax error: ON expected after INDEX'
+    t0 = tp
+    nb[n] = parseexpr()
+    ktxt = toktext(t0, tp)
+    ftxt = ''
+    if isword('TO') = 1 | isword('TAG') = 1 then do
+      call adv
+      nc[n] = filearg()
+    end
+    fl = 0
+    do forever
+      if isword('FOR') = 1 then do
+        call adv
+        t0 = tp
+        nd[n] = parseexpr()
+        ftxt = toktext(t0, tp)
+        iterate
+      end
+      if isword('UNIQUE') = 1 then do
+        call adv
+        fl = fl + 1
+        iterate
+      end
+      if isword('DESCENDING') = 1 then do
+        call adv
+        fl = fl + 2
+        iterate
+      end
+      if isword('ASCENDING') = 1 | isword('ADDITIVE') = 1 | isword('COMPACT') = 1 | isword('EVAL') = 1 | isword('EVERY') = 1 then do
+        call adv
+        iterate
+      end
+      leave
+    end
+    nf[n] = fl
+    ns[n] = ktxt || '01'x || ftxt
+    return n
+  end
+  if w == 'CLOSE' then do
+    call adv
+    n = mkcmd(C_CLOSE)
+    if atend() = 0 then do
+      if isword('ALL') = 1 | isword('DATABASES') = 1 then do
+        call adv
+        nf[n] = 1
+      end
+      else if isword('INDEXES') = 1 then do
+        call adv
+        nf[n] = 2
+      end
+      else nb[n] = aliasarg()
+    end
+    call skipline
+    return n
+  end
+  if w == 'CLEAR' | w == 'CLS' then do
+    call adv
+    n = mkcmd(C_CLEAR)
+    if w == 'CLS' then nf[n] = 1
+    else if isword('MEMORY') = 1 then nf[n] = 2
+    else if isword('ALL') = 1 then nf[n] = 3
+    else nf[n] = 1
+    call skipline
+    return n
+  end
+  if w == 'ERASE' then do
+    call adv
+    n = mkcmd(C_ERASE)
+    nb[n] = filearg()
+    return n
+  end
+  if w == 'RENAME' then do
+    call adv
+    n = mkcmd(C_RENAME)
+    nb[n] = filearg()
+    if isword('TO') = 1 then call adv
+    nc[n] = filearg()
+    return n
+  end
+  if w == 'ACCEPT' | w == 'INPUT' | w == 'WAIT' then do
+    call adv
+    cmd = C_ACCEPT
+    if w == 'INPUT' then cmd = C_INPUT
+    if w == 'WAIT' then cmd = C_WAIT
+    n = mkcmd(cmd)
+    if atend() = 0 & isword('TO') = 0 then nb[n] = parseexpr()
+    if isword('TO') = 1 then do
+      call adv
+      nc[n] = parsepostfix()
+    end
+    return n
+  end
+  if w == 'READ' then do
+    call adv
+    call skipline
+    return mkcmd(C_READ)
+  end
+  if w == 'QUIT' | w == 'CANCEL' then do
+    call adv
+    call skipline
+    return mkcmd(C_QUIT)
+  end
+  if w == 'RELEASE' then do
+    call adv
+    n = mkcmd(C_RELEASE)
+    if isword('ALL') = 1 then do
+      call adv
+      nf[n] = 1
+      call skipline
+      return n
+    end
+    nb[n] = parselist()
+    return n
+  end
+  if w == 'STORE' then do
+    call adv
+    n = mkcmd(C_STORE)
+    nb[n] = parseexpr()
+    if isword('TO') = 1 then call adv
+    else call perr 'Syntax error: TO expected after STORE'
+    nc[n] = parselist()
+    return n
+  end
+  if w == 'KEYBOARD' then do
+    call adv
+    n = mkcmd(C_KEYBOARD)
+    nb[n] = parseexpr()
+    return n
+  end
+  if w == 'SET' then return parseset()
+  if w == 'RUN' then do
+    call adv
+    call skipline
+    return mkcmd(C_RUN)
+  end
+  if w == 'SORT' | w == 'UPDATE' | w == 'JOIN' | w == 'SAVE' | w == 'RESTORE' then do
+    call perr 'Command ' || w || ' is not supported'
+    return 0
+  end
+  if w == 'CREATE' then do
+    call perr 'Command CREATE is not supported (use dbCreate())'
+    return 0
+  end
+  return 0
+
+parsescopedcmd: procedure = .int
+  arg w = .string
+  call adv
+  cmd = 0
+  if w == 'DELETE' then cmd = C_DELETE
+  if w == 'RECALL' then cmd = C_RECALL
+  if w == 'COUNT' then cmd = C_COUNT
+  if w == 'SUM' then cmd = C_SUM
+  if w == 'AVERAGE' then cmd = C_AVERAGE
+  if w == 'LIST' then cmd = C_LIST
+  if w == 'DISPLAY' then cmd = C_DISPLAY
+  if w == 'LOCATE' then cmd = C_LOCATE
+  if w == 'REPLACE' then cmd = C_REPLACE
+  if w == 'COPY' then cmd = C_COPY
+  if w == 'TOTAL' then cmd = C_TOTAL
+  n = mkscoped(cmd)
+  hold = mknode(K_NOP, 0, 0, 0)
+  ne[n] = hold
+  if cmd = C_REPLACE then do
+    call parsescope(n)
+    head = 0
+    tail = 0
+    do forever
+      if tk[tp] <> E_IDENT then do
+        call perr 'Syntax error in REPLACE'
+        leave
+      end
+      fld = fieldref()
+      if isword('WITH') = 1 then call adv
+      else call perr 'Syntax error: WITH expected'
+      v = parseexpr()
+      nx[fld] = v
+      if head = 0 then head = fld
+      else nx[tail] = fld
+      tail = v
+      if isop(',') = 1 then do
+        call adv
+        iterate
+      end
+      leave
+    end
+    na[hold] = head
+  end
+  else if cmd = C_COUNT then do
+    if isword('TO') = 1 then do
+      call adv
+      na[hold] = parsepostfix()
+    end
+  end
+  else if cmd = C_SUM | cmd = C_AVERAGE then do
+    if isword('TO') = 0 & isword('FOR') = 0 & isword('WHILE') = 0 & isword('ALL') = 0 & isword('NEXT') = 0 & isword('REST') = 0 then do
+      na[hold] = parselist()
+      nc[hold] = listcount
+    end
+    if isword('TO') = 1 then do
+      call adv
+      nb[hold] = parselist()
+    end
+  end
+  else if cmd = C_LIST | cmd = C_DISPLAY then do
+    if isword('STRUCTURE') = 1 then do
+      call adv
+      nf[hold] = 1
+    end
+    else do
+      do forever
+        if isword('OFF') = 1 then do
+          call adv
+          nd[hold] = 1
+          iterate
+        end
+        if isword('FIELDS') = 1 then call adv
+        leave
+      end
+      if atend() = 0 & isword('ALL') = 0 & isword('NEXT') = 0 & isword('REST') = 0 & isword('FOR') = 0 & isword('WHILE') = 0 & isword('TO') = 0 & isword('RECORD') = 0 then do
+        na[hold] = parselist()
+      end
+    end
+  end
+  else if cmd = C_COPY then do
+    if isword('STRUCTURE') = 1 then do
+      call adv
+      nf[hold] = 1
+      if isword('EXTENDED') = 1 then call adv
+    end
+    if isword('TO') = 1 then do
+      call adv
+      nb[hold] = filearg()
+    end
+    if isword('FIELDS') = 1 then do
+      call adv
+      na[hold] = parselist()
+    end
+  end
+  else if cmd = C_LOCATE then do
+  end
+  call parsescope(n)
+  if cmd = C_LIST | cmd = C_DISPLAY then do
+    if isword('TO') = 1 then call skipline
+  end
+  if cmd = C_COPY then do
+    if isword('TO') = 1 then do
+      call adv
+      nb[hold] = filearg()
+    end
+  end
+  if cmd = C_SUM | cmd = C_AVERAGE then do
+    if isword('TO') = 1 then do
+      call adv
+      nb[hold] = parselist()
+    end
+  end
+  if cmd = C_COUNT then do
+    if isword('TO') = 1 then do
+      call adv
+      na[hold] = parsepostfix()
+    end
+  end
+  return n
+
+/* a field reference in a command: name or alias->name */
+fieldref: procedure = .int
+  sym = tv[tp]
+  name = ts[tp]
+  call adv
+  if isop('->') = 1 then do
+    call adv
+    if tk[tp] = E_IDENT then do
+      s2 = tv[tp]
+      call adv
+      return mknode(K_ALIASFLD, constnode(mkstr(name)), s2, 0)
+    end
+    call perr 'Syntax error after ->'
+    return constnode(0)
+  end
+  return mknode(K_FIELDX, sym, 0, 0)
+
+parseset: procedure = .int
+  call adv
+  if tk[tp] <> E_IDENT then do
+    call perr 'Syntax error after SET'
+    return 0
+  end
+  name = ts[tp]
+  call adv
+  n = mkcmd(C_SET)
+  ns[n] = name
+  if name == 'COLOR' | name == 'CURSOR' | name == 'KEY' | name == 'FUNCTION' | name == 'MESSAGE' | name == 'WRAP' | name == 'SCOREBOARD' | name == 'INTENSITY' | name == 'TYPEAHEAD' | name == 'DEVICE' | name == 'PRINTER' | name == 'MARGIN' | name == 'CONFIRM' | name == 'EVENTMASK' | name == 'BELL' | name == 'ESCAPE' | name == 'CANCEL' | name == 'COUNT' | name == 'MULTILOCKS' | name == 'AUTOPEN' | name == 'AUTORDER' then do
+    call skipline
+    return n
+  end
+  if name == 'DATE' & isword('FORMAT') = 1 then call adv
+  if name == 'ALTERNATE' & isword('TO') = 0 & isword('ON') = 0 & isword('OFF') = 0 then do
+    call skipline
+    return n
+  end
+  if isword('TO') = 1 then call adv
+  if isword('ON') = 1 then do
+    call adv
+    nc[n] = 1
+    return n
+  end
+  if isword('OFF') = 1 then do
+    call adv
+    nc[n] = 2
+    return n
+  end
+  if name == 'INDEX' then do
+    if atend() = 0 then do
+      h = filearg()
+      t = h
+      do while isop(',') = 1
+        call adv
+        x = filearg()
+        nx[t] = x
+        t = x
+      end
+      nd[n] = h
+    end
+    return n
+  end
+  if name == 'RELATION' then do
+    if isword('ADDITIVE') = 1 then call adv
+    head = 0
+    tail = 0
+    do while atend() = 0
+      k = parseexpr()
+      if isword('INTO') = 1 then call adv
+      al = aliasarg()
+      nx[k] = al
+      if head = 0 then head = k
+      else nx[tail] = k
+      tail = al
+      if isop(',') = 1 then call adv
+      else leave
+    end
+    nd[n] = head
+    return n
+  end
+  if atend() = 1 then return n
+  if tk[tp] = E_IDENT then do
+    /* a bare word value such as SET DATE ANSI, SET DEFAULT TO c:\data */
+    if name == 'DATE' | name == 'DEFAULT' | name == 'PATH' | name == 'ALTERNATE' then do
+      nb[n] = bareword()
+      return n
+    end
+  end
+  if name == 'DEFAULT' | name == 'PATH' then do
+    nb[n] = filearg()
+    return n
+  end
+  nb[n] = parseexpr()
+  call skipline
+  return n
+
+/* source text of tokens a .. b-1 */
+toktext: procedure = .string
+  arg a = .int, b = .int
+  r = ''
+  do i = a to b - 1
+    if i > a & tsp[i] = 1 then r = r || ' '
+    if tk[i] = E_STR then do
+      if pos('"', ts[i]) = 0 then r = r || '"' || ts[i] || '"'
+      else r = r || "'" || ts[i] || "'"
+    end
+    else r = r || tor[i]
+  end
+  return r

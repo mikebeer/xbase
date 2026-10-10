@@ -1,0 +1,424 @@
+/* ===================================================================== */
+/*                           VALUES AND HEAP                             */
+/* ===================================================================== */
+newcell: procedure = .int
+  arg tag = .int
+  ncell = ncell + 1
+  ctag[ncell] = tag
+  cint[ncell] = 0
+  ca1[ncell] = 0
+  ca2[ncell] = 0
+  return ncell
+
+mkint: procedure = .int
+  arg n = .int
+  if n >= 0 then return 0 - (2 * n + 1)
+  return 2 * n
+
+toint: procedure = .int
+  arg x = .float
+  return trunc(x) as .int
+
+isint: procedure = .int
+  arg r = .int
+  if r < 0 then return 1
+  return 0
+
+intval: procedure = .int
+  arg r = .int
+  if r % 2 = 0 then return r / 2
+  return (0 - r - 1) / 2
+
+/* a number with width w and d decimals */
+mknum: procedure = .int
+  arg x = .float, w = .int, d = .int
+  if d = 0 then do
+    if x < 9.0e15 & x > -9.0e15 then do
+      q = trunc(x) as .int
+      if q * 1.0 = x then return mkint(q)
+    end
+  end
+  c = newcell(T_NUM)
+  cnum[c] = x
+  cint[c] = w * 256 + d
+  return c
+
+mkfloat: procedure = .int
+  arg x = .float
+  return mknum(x, 10, 0)
+
+isnum: procedure = .int
+  arg r = .int
+  if r < 0 then return 1
+  if r > 2 then do
+    if ctag[r] = T_NUM then return 1
+  end
+  return 0
+
+isstr: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_STR then return 1
+  end
+  return 0
+
+islog: procedure = .int
+  arg r = .int
+  if r = 1 | r = 2 then return 1
+  return 0
+
+isdate: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_DATE then return 1
+  end
+  return 0
+
+isarr: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_ARR then return 1
+  end
+  return 0
+
+ishash: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_HASH then return 1
+  end
+  return 0
+
+isblk: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_BLK then return 1
+  end
+  return 0
+
+isobj: procedure = .int
+  arg r = .int
+  if r > 2 then do
+    if ctag[r] = T_OBJ then return 1
+  end
+  return 0
+
+/* numeric value as a float */
+numval: procedure = .float
+  arg r = .int
+  if r < 0 then return intval(r) * 1.0
+  if r > 2 then do
+    if ctag[r] = T_NUM then return cnum[r]
+  end
+  return 0.0
+
+/* decimals of a number */
+numdec: procedure = .int
+  arg r = .int
+  if r < 0 then return 0
+  return cint[r] % 256
+
+numwid: procedure = .int
+  arg r = .int
+  if r < 0 then return 10
+  return cint[r] / 256
+
+mkstr: procedure = .int
+  arg s = .string
+  c = newcell(T_STR)
+  cstr[c] = s
+  return c
+
+mklog: procedure = .int
+  arg b = .int
+  if b <> 0 then return 2
+  return 1
+
+mkdate: procedure = .int
+  arg j = .int
+  c = newcell(T_DATE)
+  cint[c] = j
+  return c
+
+/* is the value true? */
+truthy: procedure = .int
+  arg r = .int
+  if r = 2 then return 1
+  return 0
+
+/* ---------------------------------------------------------------- arrays */
+mkarray: procedure = .int
+  arg n = .int
+  c = newcell(T_ARR)
+  cap = n
+  if cap < 4 then cap = 4
+  cint[c] = nv + 1
+  ca1[c] = n
+  ca2[c] = cap
+  do i = 1 to cap
+    vdat[nv + i] = 0
+  end
+  nv = nv + cap
+  return c
+
+arrlen: procedure = .int
+  arg a = .int
+  return ca1[a]
+
+arrget: procedure = .int
+  arg a = .int, i = .int
+  return vdat[cint[a] + i - 1]
+
+arrset: procedure = .void
+  arg a = .int, i = .int, v = .int
+  vdat[cint[a] + i - 1] = v
+  return
+
+arrgrow: procedure = .void
+  arg a = .int, cap = .int
+  s = cint[a]
+  n = ca1[a]
+  do i = 1 to n
+    vdat[nv + i] = vdat[s + i - 1]
+  end
+  do i = n + 1 to cap
+    vdat[nv + i] = 0
+  end
+  cint[a] = nv + 1
+  ca2[a] = cap
+  nv = nv + cap
+  return
+
+arrpush: procedure = .void
+  arg a = .int, v = .int
+  n = ca1[a]
+  if n >= ca2[a] then call arrgrow a, n * 2 + 4
+  n = n + 1
+  ca1[a] = n
+  vdat[cint[a] + n - 1] = v
+  return
+
+arrresize: procedure = .void
+  arg a = .int, n = .int
+  if n > ca2[a] then call arrgrow a, n + 4
+  old = ca1[a]
+  s = cint[a]
+  if n > old then do
+    do i = old + 1 to n
+      vdat[s + i - 1] = 0
+    end
+  end
+  ca1[a] = n
+  return
+
+/* ---------------------------------------------------------------- hashes */
+mkhash: procedure = .int
+  c = newcell(T_HASH)
+  k = mkarray(0)
+  v = mkarray(0)
+  ca1[c] = k
+  ca2[c] = v
+  return c
+
+hashlen: procedure = .int
+  arg h = .int
+  return ca1[ca1[h]]
+
+/* key equality: strings exact, numbers by value, dates by number */
+keyeq: procedure = .int
+  arg a = .int, b = .int
+  if a = b then return 1
+  if a <= 2 | b <= 2 then do
+    if a < 0 & b < 0 then return 0
+    return 0
+  end
+  ta = ctag[a]
+  if ta <> ctag[b] then return 0
+  if ta = T_STR then do
+    if cstr[a] == cstr[b] then return 1
+    return 0
+  end
+  if ta = T_NUM then do
+    if cnum[a] = cnum[b] then return 1
+    return 0
+  end
+  if ta = T_DATE then do
+    if cint[a] = cint[b] then return 1
+    return 0
+  end
+  return 0
+
+/* find key; returns position or 0 */
+hfind: procedure = .int
+  arg h = .int, key = .int
+  ks = ca1[h]
+  n = ca1[ks]
+  s = cint[ks]
+  if key < 0 then do
+    do i = 1 to n
+      if vdat[s + i - 1] = key then return i
+    end
+    kf = intval(key) * 1.0
+    do i = 1 to n
+      k2 = vdat[s + i - 1]
+      if k2 > 2 then do
+        if ctag[k2] = T_NUM then do
+          if cnum[k2] = kf then return i
+        end
+      end
+    end
+    return 0
+  end
+  do i = 1 to n
+    k2 = vdat[s + i - 1]
+    if k2 < 0 & key > 2 then do
+      if ctag[key] = T_NUM then do
+        if cnum[key] = intval(k2) * 1.0 then return i
+      end
+    end
+    else if keyeq(k2, key) = 1 then return i
+  end
+  return 0
+
+hset: procedure = .void
+  arg h = .int, key = .int, v = .int
+  p = hfind(h, key)
+  if p > 0 then do
+    call arrset ca2[h], p, v
+    return
+  end
+  call arrpush ca1[h], key
+  call arrpush ca2[h], v
+  return
+
+hdel: procedure = .void
+  arg h = .int, p = .int
+  ks = ca1[h]
+  vs = ca2[h]
+  n = ca1[ks]
+  do i = p to n - 1
+    call arrset ks, i, arrget(ks, i + 1)
+    call arrset vs, i, arrget(vs, i + 1)
+  end
+  ca1[ks] = n - 1
+  ca1[vs] = n - 1
+  return
+
+/* ---------------------------------------------------------------- symbols */
+symhash: procedure = .int
+  arg s = .string
+  h = 7
+  n = length(s)
+  do i = 1 to n
+    h = (h * 31 + c2d(substr(s, i, 1))) % 100003
+  end
+  return h % 2048 + 1
+
+intern: procedure = .int
+  arg name = .string
+  b = symhash(name)
+  s = sbk[b]
+  do while s > 0
+    if snm[s] == name then return s
+    s = shn[s]
+  end
+  nsym = nsym + 1
+  snm[nsym] = name
+  shn[nsym] = sbk[b]
+  sbk[b] = nsym
+  sfn[nsym] = 0
+  sbi[nsym] = 0
+  smv[nsym] = 0
+  smvd[nsym] = 0
+  sdef[nsym] = 0
+  scls[nsym] = 0
+  return nsym
+
+registerprim: procedure = .void
+  arg name = .string, id = .int, mn = .int, mx = .int
+  s = intern(name)
+  sbi[s] = id
+  pmin[id] = mn
+  pmax[id] = mx
+  return
+
+/* ------------------------------------------------------------------ nodes */
+mknode: procedure = .int
+  arg kind = .int, a = .int, b = .int, c = .int
+  nn = nn + 1
+  nt[nn] = kind
+  na[nn] = a
+  nb[nn] = b
+  nc[nn] = c
+  nd[nn] = 0
+  ne[nn] = 0
+  nf[nn] = 0
+  nx[nn] = 0
+  nl[nn] = curline
+  ns[nn] = ''
+  return nn
+
+/* ----------------------------------------------------------------- output */
+emit: procedure = .void
+  arg s = .string
+  if s = '' then return
+  k = lastpos('0a'x, s)
+  if k > 0 then outcol = length(s) - k
+  else outcol = outcol + length(s)
+  outstarted = 1
+  outbuf = outbuf || s
+  if length(outbuf) > 2000 then call flushout
+  return
+
+flushout: procedure = .void
+  if outbuf <> '' then do
+    call charout 'stdout', outbuf
+    outbuf = ''
+  end
+  return
+
+emitnl: procedure = .void
+  call emit '0a'x
+  outcol = 0
+  scrrow = scrrow + 1
+  scrcol = 0
+  return
+
+errout: procedure = .void
+  arg s = .string
+  call flushout
+  call lineout 'stderr', s
+  return
+
+/* ------------------------------------------------------- pair hash table */
+pmhash: procedure = .int
+  arg kind = .int, a = .int, b = .int
+  return (kind * 7919 + a * 131 + b * 31) % 4093 + 1
+
+pm_get: procedure = .int
+  arg kind = .int, a = .int, b = .int
+  i = pmb[pmhash(kind, a, b)]
+  do while i > 0
+    if pmk1[i] = kind & pmk2[i] = a & pmk3[i] = b then return pmv[i]
+    i = pmn[i]
+  end
+  return 0
+
+pm_put: procedure = .void
+  arg kind = .int, a = .int, b = .int, v = .int
+  h = pmhash(kind, a, b)
+  i = pmb[h]
+  do while i > 0
+    if pmk1[i] = kind & pmk2[i] = a & pmk3[i] = b then do
+      pmv[i] = v
+      return
+    end
+    i = pmn[i]
+  end
+  npm = npm + 1
+  pmk1[npm] = kind
+  pmk2[npm] = a
+  pmk3[npm] = b
+  pmv[npm] = v
+  pmn[npm] = pmb[h]
+  pmb[h] = npm
+  return

@@ -1,0 +1,626 @@
+/* ===================================================================== */
+/*                       TOKENIZER AND PREPROCESSOR                      */
+/* ===================================================================== */
+isidstart: procedure = .int
+  arg c = .string
+  k = c2d(c)
+  if k >= 65 & k <= 90 then return 1
+  if k >= 97 & k <= 122 then return 1
+  if k = 95 then return 1
+  if k >= 192 then return 1
+  return 0
+
+isidchar: procedure = .int
+  arg c = .string
+  k = c2d(c)
+  if k >= 65 & k <= 90 then return 1
+  if k >= 97 & k <= 122 then return 1
+  if k >= 48 & k <= 57 then return 1
+  if k = 95 then return 1
+  if k >= 192 then return 1
+  return 0
+
+isdigitc: procedure = .int
+  arg c = .string
+  k = c2d(c)
+  if k >= 48 & k <= 57 then return 1
+  return 0
+
+addtok: procedure = .void
+  arg kind = .int, text = .string, sp = .int
+  ntok = ntok + 1
+  tk[ntok] = kind
+  ts[ntok] = text
+  tl[ntok] = curline
+  tsp[ntok] = sp
+  tv[ntok] = 0
+  tor[ntok] = text
+  return
+
+/* replace whole-word occurrences of name by repl */
+replword: procedure = .string
+  arg body = .string, name = .string, repl = .string
+  res = ''
+  i = 1
+  n = length(body)
+  nl2 = length(name)
+  do while i <= n
+    c = substr(body, i, 1)
+    if isidstart(c) = 1 then do
+      j = i
+      do while j <= n
+        if isidchar(substr(body, j, 1)) = 0 then leave
+        j = j + 1
+      end
+      w = substr(body, i, j - i)
+      if upper(w) == name then res = res || repl
+      else res = res || w
+      i = j
+    end
+    else do
+      res = res || c
+      i = i + 1
+    end
+  end
+  return res
+
+/* expand a function-like #define; ln(p) is just after the name. Returns text, sets lexpos */
+lexpos = 0
+expandfn: procedure = .string
+  arg di = .int, ln = .string, p = .int
+  /* skip blanks, expect ( */
+  q = p
+  do while substr(ln, q, 1) = ' '
+    q = q + 1
+  end
+  if substr(ln, q, 1) <> '(' then do
+    lexpos = 0
+    return ''
+  end
+  q = q + 1
+  dep = 1
+  arg1 = ''
+  nargs = 0
+  actual = .string[]
+  inq = ''
+  n = length(ln)
+  do while q <= n
+    c = substr(ln, q, 1)
+    if inq <> '' then do
+      arg1 = arg1 || c
+      if c == inq then inq = ''
+    end
+    else if c = '"' | c = "'" then do
+      inq = c
+      arg1 = arg1 || c
+    end
+    else if c = '(' | c = '{' | c = '[' then do
+      dep = dep + 1
+      arg1 = arg1 || c
+    end
+    else if c = ')' | c = '}' | c = ']' then do
+      dep = dep - 1
+      if dep = 0 then do
+        nargs = nargs + 1
+        actual[nargs] = strip(arg1)
+        q = q + 1
+        leave
+      end
+      arg1 = arg1 || c
+    end
+    else if c = ',' & dep = 1 then do
+      nargs = nargs + 1
+      actual[nargs] = strip(arg1)
+      arg1 = ''
+    end
+    else arg1 = arg1 || c
+    q = q + 1
+  end
+  body = dval[di]
+  pl = dpar[di]
+  k = 0
+  do while pl <> ''
+    pp = pos(',', pl)
+    if pp = 0 then do
+      pn = strip(pl)
+      pl = ''
+    end
+    else do
+      pn = strip(substr(pl, 1, pp - 1))
+      pl = substr(pl, pp + 1)
+    end
+    k = k + 1
+    rep = ''
+    if k <= nargs then rep = actual[k]
+    body = replword(body, upper(pn), rep)
+  end
+  lexpos = q
+  return body
+
+/* tokenize one chunk of text */
+lexchunk: procedure = .void
+  arg ln = .string, depth = .int
+  n = length(ln)
+  p = 1
+  sp = 0
+  do while p <= n
+    c = substr(ln, p, 1)
+    if inblk = 1 then do
+      q = pos('*/', ln, p)
+      if q = 0 then return
+      inblk = 0
+      p = q + 2
+      sp = 1
+      iterate
+    end
+    if c = ' ' | c = '09'x | c = '0d'x then do
+      sp = 1
+      p = p + 1
+      iterate
+    end
+    c2 = substr(ln, p + 1, 1)
+    if c = '/' & c2 = '/' then return
+    if c = '&' & c2 = '&' then return
+    if c = '/' & c2 = '*' then do
+      q = pos('*/', ln, p + 2)
+      if q = 0 then do
+        inblk = 1
+        return
+      end
+      p = q + 2
+      sp = 1
+      iterate
+    end
+    if isidstart(c) = 1 then do
+      j = p
+      do while j <= n
+        if isidchar(substr(ln, j, 1)) = 0 then leave
+        j = j + 1
+      end
+      orig = substr(ln, p, j - p)
+      w = upper(orig)
+      p = j
+      s = intern(w)
+      di = sdef[s]
+      if di > 0 & depth < 8 then do
+        if dpar[di] == '' then do
+          call lexchunk dval[di], depth + 1
+        end
+        else do
+          ex = expandfn(di, ln, p)
+          if lexpos > 0 then do
+            p = lexpos
+            call lexchunk ex, depth + 1
+          end
+          else do
+            call addtok E_IDENT, w, sp
+            tv[ntok] = s
+            tor[ntok] = orig
+          end
+        end
+        sp = 0
+        iterate
+      end
+      call addtok E_IDENT, w, sp
+      tv[ntok] = s
+      tor[ntok] = orig
+      sp = 0
+      iterate
+    end
+    if isdigitc(c) = 1 | (c = '.' & isdigitc(c2) = 1) then do
+      if c = '0' & (c2 = 'x' | c2 = 'X') then do
+        j = p + 2
+        do while j <= n
+          if pos(upper(substr(ln, j, 1)), '0123456789ABCDEF') = 0 then leave
+          j = j + 1
+        end
+        call addtok E_NUM, x2d(substr(ln, p + 2, j - p - 2)) || '', sp
+        p = j
+        sp = 0
+        iterate
+      end
+      if c = '0' & (c2 = 'd' | c2 = 'D') & isdigitc(substr(ln, p + 2, 1)) = 1 then do
+        call addtok E_DATE, substr(ln, p + 2, 8), sp
+        p = p + 10
+        sp = 0
+        iterate
+      end
+      j = p
+      do while j <= n
+        if isdigitc(substr(ln, j, 1)) = 0 then leave
+        j = j + 1
+      end
+      if substr(ln, j, 1) = '.' & isdigitc(substr(ln, j + 1, 1)) = 1 then do
+        j = j + 1
+        do while j <= n
+          if isdigitc(substr(ln, j, 1)) = 0 then leave
+          j = j + 1
+        end
+      end
+      else if substr(ln, j, 1) = '.' & j > p then do
+        /* "5." is a number unless it starts .AND. .OR. .NOT. */
+        c3 = upper(substr(ln, j + 1, 1))
+        if pos(c3, 'AONTF') = 0 then j = j + 1
+      end
+      ec = substr(ln, j, 1)
+      if (ec = 'e' | ec = 'E') & j > p then do
+        k = j + 1
+        if substr(ln, k, 1) = '-' | substr(ln, k, 1) = '+' then k = k + 1
+        if isdigitc(substr(ln, k, 1)) = 1 then do
+          do while k <= n
+            if isdigitc(substr(ln, k, 1)) = 0 then leave
+            k = k + 1
+          end
+          j = k
+        end
+      end
+      call addtok E_NUM, substr(ln, p, j - p), sp
+      p = j
+      sp = 0
+      iterate
+    end
+    if c = '"' | c = "'" then do
+      q = pos(c, ln, p + 1)
+      if q = 0 then do
+        call addtok E_STR, substr(ln, p + 1), sp
+        p = n + 1
+      end
+      else do
+        call addtok E_STR, substr(ln, p + 1, q - p - 1), sp
+        p = q + 1
+      end
+      sp = 0
+      iterate
+    end
+    if c = '.' then do
+      q = pos('.', ln, p + 1)
+      if q > 0 & q - p <= 4 then do
+        w = upper(substr(ln, p + 1, q - p - 1))
+        if w = 'T' | w = 'Y' then do
+          call addtok E_LOG, 'T', sp
+          p = q + 1
+          sp = 0
+          iterate
+        end
+        if w = 'F' | w = 'N' then do
+          call addtok E_LOG, 'F', sp
+          p = q + 1
+          sp = 0
+          iterate
+        end
+        if w = 'AND' | w = 'OR' | w = 'NOT' then do
+          call addtok E_OP, '.' || w || '.', sp
+          p = q + 1
+          sp = 0
+          iterate
+        end
+      end
+      call addtok E_OP, '.', sp
+      p = p + 1
+      sp = 0
+      iterate
+    end
+    if c = '{' & c2 = '^' then do
+      q = pos('}', ln, p)
+      if q > 0 then do
+        d = strip(substr(ln, p + 2, q - p - 2))
+        d = changestr('-', d, '')
+        d = changestr('/', d, '')
+        call addtok E_DATE, d, sp
+        p = q + 1
+        sp = 0
+        iterate
+      end
+    end
+    /* operators */
+    c3 = substr(ln, p, 3)
+    op = ''
+    if c3 == '**=' then op = c3
+    else do
+      c22 = substr(ln, p, 2)
+      if pos(' ' || c22 || ' ', ' := += -= *= /= %= ^= == != <> <= >= -> :: ++ -- ** => ?? ') > 0 & length(c22) = 2 then op = c22
+      else op = c
+    end
+    if op == ';' then call addtok E_EOL, ';', sp
+    else call addtok E_OP, op, sp
+    p = p + length(op)
+    sp = 0
+  end
+  return
+
+/* ------------------------------------------------------------ directives */
+srcdir = '.'
+
+/* cREXX cannot delete files: ERASE truncates, so an empty file counts as absent */
+fileexists: procedure = .int
+  arg fname = .string
+  fileid = 0
+  rc = 0
+  mode = "rb"
+  chunk = .binary
+  clen = 0
+  csz = 1
+  assembler fopen fileid, fname, mode
+  if fileid = 0 then return 0
+  assembler freadb chunk, fileid, csz
+  assembler blen clen, chunk
+  assembler fclose rc, fileid
+  if clen > 0 then return 1
+  return 0
+
+dirof: procedure = .string
+  arg f = .string
+  k = lastpos('/', f)
+  if k = 0 then return '.'
+  if k = 1 then return '/'
+  return substr(f, 1, k - 1)
+
+definemacro: procedure = .void
+  arg name = .string, par = .string, val = .string
+  s = intern(upper(name))
+  di = sdef[s]
+  if di = 0 then do
+    ndef = ndef + 1
+    di = ndef
+    sdef[s] = di
+  end
+  dname[di] = upper(name)
+  dval[di] = val
+  dpar[di] = par
+  return
+
+dodirective: procedure = .void
+  arg t = .string
+  /* t starts with # */
+  body = strip(substr(t, 2))
+  sp = pos(' ', body)
+  if sp = 0 then sp = pos('09'x, body)
+  if sp = 0 then do
+    cmd = upper(body)
+    rest = ''
+  end
+  else do
+    cmd = upper(substr(body, 1, sp - 1))
+    rest = strip(substr(body, sp + 1))
+  end
+  /* conditionals first: they work when skipping */
+  if cmd = 'IFDEF' | cmd = 'IFNDEF' then do
+    if ifskip = 1 then do
+      ifdepth = ifdepth + 1
+      ifstate[ifdepth] = 4
+    end
+    else do
+      w = upper(word(rest, 1))
+      has = 0
+      if sdef[intern(w)] > 0 then has = 1
+      if cmd = 'IFNDEF' then has = 1 - has
+      ifdepth = ifdepth + 1
+      if has = 1 then ifstate[ifdepth] = 1
+      else ifstate[ifdepth] = 2
+    end
+    call setifskip
+    return
+  end
+  if cmd = 'IF' then do
+    if ifskip = 1 then do
+      ifdepth = ifdepth + 1
+      ifstate[ifdepth] = 4
+    end
+    else do
+      ifdepth = ifdepth + 1
+      v = strip(rest)
+      if v == '0' | v == '.F.' then ifstate[ifdepth] = 2
+      else ifstate[ifdepth] = 1
+    end
+    call setifskip
+    return
+  end
+  if cmd = 'ELSE' then do
+    if ifdepth > 0 then do
+      st = ifstate[ifdepth]
+      if st = 1 then ifstate[ifdepth] = 3
+      else if st = 2 then ifstate[ifdepth] = 1
+    end
+    call setifskip
+    return
+  end
+  if cmd = 'ENDIF' then do
+    if ifdepth > 0 then ifdepth = ifdepth - 1
+    call setifskip
+    return
+  end
+  if ifskip = 1 then return
+  if cmd = 'DEFINE' then do
+    /* NAME or NAME(args) value */
+    j = 1
+    do while j <= length(rest)
+      if isidchar(substr(rest, j, 1)) = 0 then leave
+      j = j + 1
+    end
+    name = substr(rest, 1, j - 1)
+    par = ''
+    fn = 0
+    if substr(rest, j, 1) = '(' then do
+      q = pos(')', rest, j)
+      if q > 0 then do
+        par = substr(rest, j + 1, q - j - 1)
+        if strip(par) == '' then par = ' '
+        fn = 1
+        j = q + 1
+      end
+    end
+    val = strip(substr(rest, j))
+    if fn = 1 & strip(par) == '' then par = ''
+    call definemacro name, par, val
+    return
+  end
+  if cmd = 'UNDEF' then do
+    s = intern(upper(word(rest, 1)))
+    sdef[s] = 0
+    return
+  end
+  if cmd = 'INCLUDE' then do
+    f = strip(rest)
+    f = changestr('"', f, '')
+    f = changestr('<', f, '')
+    f = changestr('>', f, '')
+    f = changestr("'", f, '')
+    call includefile f
+    return
+  end
+  /* #pragma, #command, #translate, #stdout, #error ... are ignored */
+  return
+
+setifskip: procedure = .void
+  ifskip = 0
+  if ifdepth > 0 then do
+    if ifstate[ifdepth] <> 1 then ifskip = 1
+  end
+  return
+
+includefile: procedure = .void
+  arg f = .string
+  std = stdinclude(upper(f))
+  if std <> '' then do
+    call lexstring std, f
+    return
+  end
+  cand = srcdir || '/' || f
+  if fileexists(f) = 1 then cand = f
+  else if fileexists(cand) = 0 then do
+    cand = incpath || '/' || f
+    if fileexists(cand) = 0 then do
+      if right(upper(f), 3) = '.CH' then return
+      call errout 'Error: cannot open include file ' || f
+      exit 1
+    end
+  end
+  junk = lexfile(cand)
+  return
+
+/* tokenize a block of text with line feeds */
+lexstring: procedure = .void
+  arg text = .string, nm = .string
+  rest = text
+  do while rest <> ''
+    k = pos('0a'x, rest)
+    if k = 0 then do
+      ln = rest
+      rest = ''
+    end
+    else do
+      ln = substr(rest, 1, k - 1)
+      rest = substr(rest, k + 1)
+    end
+    call lexlogical ln
+  end
+  return
+
+/* one logical line */
+lexlogical: procedure = .void
+  arg ln = .string
+  t = strip(ln, 'L')
+  if inblk = 1 then do
+    call lexchunk ln, 0
+    if inblk = 0 & ifskip = 0 then call addtok E_EOL, '', 0
+    return
+  end
+  if t == '' then return
+  c = substr(t, 1, 1)
+  if c = '#' then do
+    c2 = substr(t, 2, 1)
+    if c2 <> '=' & c2 <> ' ' | length(t) > 1 then do
+      call dodirective t
+      return
+    end
+  end
+  if ifskip = 1 then return
+  if c = '*' then return
+  if upper(word(t, 1)) == 'NOTE' then return
+  if substr(t, 1, 2) == '&&' then return
+  call lexchunk ln, 0
+  call addtok E_EOL, '', 0
+  return
+
+lexfile: procedure = .int
+  arg fname = .string
+  fl = readlines(fname, 1, 0, 'noraise')
+  if fl.0 >= 1 then do
+    if fl[1] == '-8 OPEN ERROR' then return 1
+  end
+  oldsrc = srcdir
+  srcdir = dirof(fname)
+  oldname = srcname
+  srcname = fname
+  i = 1
+  nlines = fl.0
+  do while i <= nlines
+    ln = fl[i]
+    curline = i
+    do forever
+      tt = strip(ln, 'T')
+      if right(tt, 1) = ';' & i < nlines & inblk = 0 then do
+        ln = substr(tt, 1, length(tt) - 1) || ' ' || fl[i + 1]
+        i = i + 1
+      end
+      else leave
+    end
+    tl1 = strip(ln)
+    if upper(word(tl1, 1)) == 'TEXT' & ifskip = 0 & inblk = 0 then do
+      w2 = word(tl1, 2)
+      if w2 == '' | upper(w2) == 'TO' | upper(w2) == 'TOFILE' then do
+        call addtok E_IDENT, 'TEXT', 0
+        tv[ntok] = intern('TEXT')
+        rest2 = strip(substr(tl1, 5))
+        if rest2 <> '' then call lexchunk rest2, 0
+        body2 = ''
+        i = i + 1
+        do while i <= nlines
+          tl2 = strip(fl[i])
+          if upper(left(tl2, 7)) == 'ENDTEXT' then leave
+          if body2 <> '' then body2 = body2 || '0a'x
+          body2 = body2 || fl[i]
+          i = i + 1
+        end
+        call addtok E_STR, body2, 1
+        call addtok E_EOL, '', 0
+        i = i + 1
+        iterate
+      end
+    end
+    call lexlogical ln
+    i = i + 1
+  end
+  srcdir = oldsrc
+  srcname = oldname
+  return 0
+
+/* standard headers: constants only */
+stdinclude: procedure = .string
+  arg nm = .string
+  nl3 = '0a'x
+  base = nm
+  k = lastpos('/', base)
+  if k > 0 then base = substr(base, k + 1)
+  if base == 'INKEY.CH' then do
+    return '#define K_ESC 27' || nl3 || '#define K_ENTER 13' || nl3 || '#define K_RETURN 13' || nl3 || '#define K_SPACE 32' || nl3 || '#define K_TAB 9' || nl3 || '#define K_BS 8' || nl3 || '#define K_UP 5' || nl3 || '#define K_DOWN 24' || nl3 || '#define K_LEFT 19' || nl3 || '#define K_RIGHT 4' || nl3 || '#define K_HOME 1' || nl3 || '#define K_END 6' || nl3 || '#define K_PGUP 18' || nl3 || '#define K_PGDN 3' || nl3 || '#define K_INS 22' || nl3 || '#define K_DEL 7' || nl3 || '#define K_CTRL_C 3' || nl3 || '#define K_F1 28' || nl3 || '#define K_F2 -1' || nl3 || '#define K_F10 -9'
+  end
+  if base == 'COMMON.CH' | base == 'STD.CH' | base == 'HBCLASS.CH' | base == 'HBVER.CH' | base == 'SIMPLEIO.CH' | base == 'DBINFO.CH' | base == 'TBROWSE.CH' | base == 'BOX.CH' | base == 'SETCURS.CH' | base == 'ACHOICE.CH' | base == 'DIRECTRY.CH' | base == 'MEMOEDIT.CH' | base == 'DBEDIT.CH' | base == 'RDDSYS.CH' | base == 'HBDYN.CH' | base == 'HBGTINFO.CH' | base == 'HBINKEY.CH' then do
+    out = ''
+    if base == 'COMMON.CH' then out = '#define HB_COMMON_CH_'
+    if base == 'SETCURS.CH' then out = '#define SC_NONE 0' || nl3 || '#define SC_NORMAL 1' || nl3 || '#define SC_INSERT 2' || nl3 || '#define SC_SPECIAL1 3' || nl3 || '#define SC_SPECIAL2 4'
+    if base == 'BOX.CH' then out = '#define B_SINGLE "' || d2c(218) || d2c(196) || d2c(191) || d2c(179) || d2c(217) || d2c(196) || d2c(192) || d2c(179) || '"'
+    if base == 'DIRECTRY.CH' then out = '#define F_NAME 1' || nl3 || '#define F_SIZE 2' || nl3 || '#define F_DATE 3' || nl3 || '#define F_TIME 4' || nl3 || '#define F_ATT 5'
+    if out == '' then out = '#define HB_STD_CH_'
+    return out
+  end
+  if base == 'FILEIO.CH' then do
+    return '#define FO_READ 0' || nl3 || '#define FO_WRITE 1' || nl3 || '#define FO_READWRITE 2' || nl3 || '#define FO_COMPAT 0' || nl3 || '#define FO_EXCLUSIVE 16' || nl3 || '#define FO_DENYWRITE 32' || nl3 || '#define FO_DENYREAD 48' || nl3 || '#define FO_DENYNONE 64' || nl3 || '#define FO_SHARED 64' || nl3 || '#define FC_NORMAL 0' || nl3 || '#define FS_SET 0' || nl3 || '#define FS_RELATIVE 1' || nl3 || '#define FS_END 2' || nl3 || '#define F_ERROR -1'
+  end
+  if base == 'DBSTRUCT.CH' then do
+    return '#define DBS_NAME 1' || nl3 || '#define DBS_TYPE 2' || nl3 || '#define DBS_LEN 3' || nl3 || '#define DBS_DEC 4'
+  end
+  if base == 'ERROR.CH' then do
+    return '#define ES_WHOCARES 0' || nl3 || '#define ES_WARNING 1' || nl3 || '#define ES_ERROR 2' || nl3 || '#define ES_CATASTROPHIC 3' || nl3 || '#define EG_ARG 1' || nl3 || '#define EG_BOUND 2' || nl3 || '#define EG_STROVERFLOW 3' || nl3 || '#define EG_NUMOVERFLOW 4' || nl3 || '#define EG_ZERODIV 5' || nl3 || '#define EG_NUMERR 6' || nl3 || '#define EG_SYNTAX 7' || nl3 || '#define EG_COMPLEXITY 8' || nl3 || '#define EG_MEM 11' || nl3 || '#define EG_NOFUNC 12' || nl3 || '#define EG_NOMETHOD 13' || nl3 || '#define EG_NOVAR 14' || nl3 || '#define EG_NOALIAS 15' || nl3 || '#define EG_NOVARMETHOD 16' || nl3 || '#define EG_BADALIAS 17' || nl3 || '#define EG_DUPALIAS 18' || nl3 || '#define EG_CREATE 20' || nl3 || '#define EG_OPEN 21' || nl3 || '#define EG_CLOSE 22' || nl3 || '#define EG_READ 23' || nl3 || '#define EG_WRITE 24' || nl3 || '#define EG_PRINT 25' || nl3 || '#define EG_UNSUPPORTED 30' || nl3 || '#define EG_LIMIT 31' || nl3 || '#define EG_CORRUPTION 32' || nl3 || '#define EG_DATATYPE 33' || nl3 || '#define EG_DATAWIDTH 34' || nl3 || '#define EG_NOTABLE 35' || nl3 || '#define EG_NOORDER 36' || nl3 || '#define EG_SHARED 37' || nl3 || '#define EG_UNLOCKED 38' || nl3 || '#define EG_READONLY 39' || nl3 || '#define EG_APPENDLOCK 40'
+  end
+  return ''
