@@ -6355,6 +6355,7 @@ transnum: procedure = .string
     out = t || copies(' ', length(out) - length(t))
   end
   if pos('C', fn) > 0 & neg = 0 then out = out || ' CR'
+  if pos('X', fn) > 0 & neg = 1 then out = out || ' DB'
   return out
 
 setdate: procedure = .void
@@ -9642,7 +9643,33 @@ pf119: procedure = .int
 pf120: procedure = .int
   arg base = .int, n = .int
   if isstr(fv[base + 1]) = 0 then return argerr('HB_STRREPLACE')
-  return fv[base + 1]
+  t = cstr[fv[base + 1]]
+  if n >= 3 & isstr(fv[base + 2]) = 1 & isstr(fv[base + 3]) = 1 then do
+    r = ''
+    do i = 1 to length(t)
+      ch = substr(t, i, 1)
+      k = pos(ch, cstr[fv[base + 2]])
+      if k > 0 & k <= length(cstr[fv[base + 3]]) then ch = substr(cstr[fv[base + 3]], k, 1)
+      r = r || ch
+    end
+    return mkstr(r)
+  end
+  if isarr(fv[base + 2]) = 1 then do
+    do k = 1 to arrlen(fv[base + 2])
+      f = arrget(fv[base + 2], k)
+      if isstr(f) = 1 then do
+        rep = ''
+        if n >= 3 then do
+          if isarr(fv[base + 3]) = 1 then do
+            if k <= arrlen(fv[base + 3]) then rep = sarg(arrget(fv[base + 3], k))
+          end
+          else if isstr(fv[base + 3]) = 1 then rep = cstr[fv[base + 3]]
+        end
+        if cstr[f] <> '' then t = changestr(cstr[f], t, rep)
+      end
+    end
+  end
+  return mkstr(t)
   return 0
 
 /* HB_STRFORMAT */
@@ -9671,7 +9698,24 @@ pf122: procedure = .int
 /* SOUNDEX */
 pf123: procedure = .int
   arg base = .int, n = .int
-  return fv[base + 1]
+  if isstr(fv[base + 1]) = 0 then return argerr('SOUNDEX')
+  u = upper(strip(cstr[fv[base + 1]]))
+  if u == '' then return mkstr('0000')
+  codes = '01230120022455012623010202'
+  r = left(u, 1)
+  last = 0
+  p0 = c2d(r) - 64
+  if p0 >= 1 & p0 <= 26 then last = substr(codes, p0, 1) as .int
+  do i = 2 to length(u)
+    ch = substr(u, i, 1)
+    q = c2d(ch) - 64
+    if q < 1 | q > 26 then iterate
+    cd = substr(codes, q, 1) as .int
+    if cd > 0 & cd <> last then r = r || cd
+    if ch <> 'H' & ch <> 'W' then last = cd
+    if length(r) = 4 then leave
+  end
+  return mkstr(left(r || '000', 4))
   return 0
 
 /* HB_CSTR HB_VALTOSTR2 */
@@ -11051,7 +11095,7 @@ initprims: procedure = .void
   call registerprim 'HB_CWD', 118, 0, 0
   call registerprim 'VALTOPRG', 119, 1, 1
   call registerprim 'HB_VALTOEXP', 119, 1, 1
-  call registerprim 'HB_STRREPLACE', 120, 3, 3
+  call registerprim 'HB_STRREPLACE', 120, 2, 3
   call registerprim 'HB_STRFORMAT', 121, 1, -1
   call registerprim 'DESCEND', 122, 1, 1
   call registerprim 'SOUNDEX', 123, 1, 1

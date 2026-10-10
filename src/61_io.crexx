@@ -254,6 +254,7 @@ transnum: procedure = .string
     out = t || copies(' ', length(out) - length(t))
   end
   if pos('C', fn) > 0 & neg = 0 then out = out || ' CR'
+  if pos('X', fn) > 0 & neg = 1 then out = out || ' DB'
   return out
 
 setdate: procedure = .void

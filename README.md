@@ -31,7 +31,7 @@ building needs only cREXX.
 
 * **Language**: `FUNCTION`/`PROCEDURE`/`STATIC`/`INIT`/`EXIT`, `LOCAL`/`STATIC`/`PRIVATE`/`PUBLIC`/`MEMVAR`,
   `IF`, `DO WHILE`, `FOR`, `FOR EACH`, `DO CASE`, `SWITCH`, `BEGIN SEQUENCE`/`RECOVER`, `TRY`/`CATCH`,
-  `WITH OBJECT`, codeblocks with closures, arrays, hashes, `&` macros, `#define`/`#include`/`#ifdef`,
+  codeblocks with closures, arrays, hashes, `&` macros, `#define`/`#include`/`#ifdef`,
   classes (`CREATE CLASS`, `VAR`, `METHOD`, `INHERIT`, `::Parent:Method()`).
 * **Data types**: character, numeric, date, logical, NIL, array, hash, codeblock, object.
 * **Functions**: about 210 built-ins (strings, maths, dates, arrays, hashes, files, error handling, `Transform`).

@@ -374,9 +374,35 @@ return mkstr('/')
 return mkstr('.')
 #PRIM VALTOPRG|HB_VALTOEXP 1 1
 return mkstr(vtoexp($1))
-#PRIM HB_STRREPLACE 3 3
+#PRIM HB_STRREPLACE 2 3
 if isstr($1) = 0 then return argerr('HB_STRREPLACE')
-return $1
+t = cstr[$1]
+if n >= 3 & isstr($2) = 1 & isstr($3) = 1 then do
+  r = ''
+  do i = 1 to length(t)
+    ch = substr(t, i, 1)
+    k = pos(ch, cstr[$2])
+    if k > 0 & k <= length(cstr[$3]) then ch = substr(cstr[$3], k, 1)
+    r = r || ch
+  end
+  return mkstr(r)
+end
+if isarr($2) = 1 then do
+  do k = 1 to arrlen($2)
+    f = arrget($2, k)
+    if isstr(f) = 1 then do
+      rep = ''
+      if n >= 3 then do
+        if isarr($3) = 1 then do
+          if k <= arrlen($3) then rep = sarg(arrget($3, k))
+        end
+        else if isstr($3) = 1 then rep = cstr[$3]
+      end
+      if cstr[f] <> '' then t = changestr(cstr[f], t, rep)
+    end
+  end
+end
+return mkstr(t)
 #PRIM HB_STRFORMAT 1 -1
 if isstr($1) = 0 then return argerr('HB_STRFORMAT')
 return mkstr(strformat(base, n))
@@ -393,6 +419,23 @@ end
 if isnum(v) = 1 then return numneg(v)
 return v
 #PRIM SOUNDEX 1 1
-return $1
+if isstr($1) = 0 then return argerr('SOUNDEX')
+u = upper(strip(cstr[$1]))
+if u == '' then return mkstr('0000')
+codes = '01230120022455012623010202'
+r = left(u, 1)
+last = 0
+p0 = c2d(r) - 64
+if p0 >= 1 & p0 <= 26 then last = substr(codes, p0, 1) as .int
+do i = 2 to length(u)
+  ch = substr(u, i, 1)
+  q = c2d(ch) - 64
+  if q < 1 | q > 26 then iterate
+  cd = substr(codes, q, 1) as .int
+  if cd > 0 & cd <> last then r = r || cd
+  if ch <> 'H' & ch <> 'W' then last = cd
+  if length(r) = 4 then leave
+end
+return mkstr(left(r || '000', 4))
 #PRIM HB_CSTR|HB_VALTOSTR2 1 1
 return mkstr(vtostr($1))
