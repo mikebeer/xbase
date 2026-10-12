@@ -7358,7 +7358,7 @@ openindex: procedure = .int
   arg a = .int, fname = .string
   fn = ixfilename(fname)
   if fileexists(fn) = 0 then return rterr('DBFNTX', 1001, 'Open error', fn)
-  t = loadtext(fn, '0a'x, 'noraise')
+  t = bytesof(fn)                 /* as ixwrite wrote it (binary: CMS reads text in EBCDIC) */
   p1 = pos('0a'x, t)
   p2 = pos('0a'x, t, p1 + 1)
   p3 = pos('0a'x, t, p2 + 1)
