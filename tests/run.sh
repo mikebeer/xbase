@@ -5,7 +5,7 @@
 #   tests/run.sh            run all tests
 #   tests/run.sh --update   rewrite the .out files from the current output
 HERE=$(cd "$(dirname "$0")" && pwd)
-XB="$HERE/../xbase"
+XB=${XB:-"$HERE/../xbase"}   # XB=c/xbase-c tests the C version
 pass=0; fail=0
 for src in "$HERE"/*.prg; do
   name=$(basename "$src" .prg)

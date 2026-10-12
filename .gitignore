@@ -1,3 +1,5 @@
 build/
 *.rxas
 *.rxbin
+c/*.o
+c/xbase-c

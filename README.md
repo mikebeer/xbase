@@ -27,6 +27,25 @@ make test       # runs tests/*.prg and compares with tests/*.out
 `xbase.crexx` is generated from `src/` by `src/gen.py` (`make gen`, needs Python 3); it is committed so that
 building needs only cREXX.
 
+## The C89 version
+
+`c/` holds a second implementation of the same interpreter, written in
+strict C89 (no `//` comments, no `long long`; every source line is at
+most 71 columns). It runs the same programs with the same output, and
+reads and writes the same `.dbf`, `.dbt` and `.xdx` files.
+
+```
+make c          # builds c/xbase-c with any C89 compiler (cc -lm)
+make test-c     # runs tests/*.prg with the C version
+c/xbase-c prog.prg [args]
+make -C c lines # checks the 71 column limit
+```
+
+It needs no cREXX. Like the cREXX version it has no garbage collector.
+It reproduces the cREXX number formatting (16 significant digits) and
+the quirks of the library; for instance `@ r, c SAY` and `DevPos` move
+to a new row but do not pad to the column.
+
 ## What it understands
 
 * **Language**: `FUNCTION`/`PROCEDURE`/`STATIC`/`INIT`/`EXIT`, `LOCAL`/`STATIC`/`PRIVATE`/`PUBLIC`/`MEMVAR`,
@@ -66,3 +85,4 @@ The manual is in [`docs/XBase-User-Guide.docx`](docs/XBase-User-Guide.docx).
 | `tests/` | test programs, expected output (`.out`) and input (`.in`) |
 | `examples/` | sample programs |
 | `docs/` | the manual |
+| `c/` | the C89 version of the interpreter |
