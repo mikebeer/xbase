@@ -84,7 +84,8 @@ extern V NILV, TRUEV, FALSEV;
 #define DJ(v)  ((v).u.j)        /* julian day number of a date */
 
 /* constructors */
-V mkint(long n);                /* whole number, width 10 */
+V mkint(long n);
+V mkwhole(double x);            /* whole number kept in the double */
 V mknum(double x, int w, int d);/* width w, d decimals; a whole x
                                    with d = 0 and |x| < 9e15 becomes
                                    width 10 like mkint */

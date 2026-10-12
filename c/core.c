@@ -128,10 +128,23 @@ V mkint(long n)
     return v;
 }
 
+/* a whole number from a sum, difference or product: kept exact in the
+   double even where long has 32 bits (VM/370 CMS) */
+V mkwhole(double x)
+{
+    V v = mkint(0);
+    if (x >= 9.2e18 || x <= -9.2e18) return mknum(x, 20, 0);
+    v.u.n = x;
+    return v;
+}
+
 V mknum(double x, int w, int d)
 {
     V v;
-    if (d == 0 && x < 9.0e15 && x > -9.0e15) {
+    /* a whole number fits an int value only within long (32 bits on
+       VM/370 CMS, where 1e16 would come out as 2147483647) */
+    if (d == 0 && x < 9.0e15 && x > -9.0e15
+        && x < (double)LONG_MAX && x > -(double)LONG_MAX) {
         double q = (double)(long)x;
         if (q == x) return mkint((long)x);
     }

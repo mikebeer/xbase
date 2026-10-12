@@ -575,8 +575,8 @@ static V numconst(const char *t)
     for (i = 0; i < len; i++) {
         if (t[i] == 'e' || t[i] == 'E') hasE = 1;
     }
-    if (d == 0 && hasE == 0 && len < 18)
-        return mkint(strtol(t, NULL, 10));
+    if (d == 0 && hasE == 0 && len < 18)       /* 32-bit long too */
+        return mkwhole(strtod(t, NULL));
     x = strtod(t, NULL);
     w = (int) len;
     if (w < 3) w = 3;
@@ -589,6 +589,7 @@ static V numconst(const char *t)
     v.t = T_NUM;
     v.w = (unsigned char) w;
     v.d = (unsigned char) d;
+    v.f = 0;
     v.u.n = x;
     return v;
 }

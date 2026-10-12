@@ -345,7 +345,7 @@ char *ntos(V v)
 V numadd(V a, V b)
 {
     int d;
-    if (a.f && b.f) return mkint(toint(a.u.n + b.u.n));
+    if (a.f && b.f) return mkwhole(a.u.n + b.u.n);
     d = numdec(a);
     if (numdec(b) > d) d = numdec(b);
     return mknum(numval(a) + numval(b), 10, d);
@@ -354,7 +354,7 @@ V numadd(V a, V b)
 V numsub(V a, V b)
 {
     int d;
-    if (a.f && b.f) return mkint(toint(a.u.n - b.u.n));
+    if (a.f && b.f) return mkwhole(a.u.n - b.u.n);
     d = numdec(a);
     if (numdec(b) > d) d = numdec(b);
     return mknum(numval(a) - numval(b), 10, d);
@@ -365,7 +365,7 @@ V nummul(V a, V b)
     double f;
     if (a.f && b.f) {
         f = a.u.n * b.u.n;
-        if (f < 9.0e18 && f > -9.0e18) return mkint(toint(f));
+        if (f < 9.0e18 && f > -9.0e18) return mkwhole(f);
         return mknum(f, 20, 0);
     }
     return mknum(numval(a) * numval(b), 10,
