@@ -2,7 +2,13 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -std=c89 -pedantic -Wall -Wextra
 LIBS    = -lm
-SRC     = core.c ops.c eval.c exec.c main.c dot.c \
+# make GDSM=/path/to/mikebeer/gdsm: the full-screen console (SET GDSM ON,
+# BROWSE, EDIT, APPEND) through GDSM's build/libgdsm.a
+ifdef GDSM
+CFLAGS += -DXB_GDSM -I$(GDSM)/include
+LIBS   := $(GDSM)/build/libgdsm.a $(GDSM_LIBS) $(LIBS)
+endif
+SRC     = core.c ops.c eval.c exec.c main.c dot.c fs.c \
           lex.c pexpr.c pstmt.c pclass.c pcmd.c cmd.c \
           dbf.c lib1.c lib2.c lib3.c lib4.c io.c
 OBJ     = $(SRC:.c=.o)

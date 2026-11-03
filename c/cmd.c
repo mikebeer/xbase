@@ -28,6 +28,24 @@ static long ngets = 0;
 void assignnew(int n, V val);
 int areaarg(V v);
 
+/* fs.c: the GDSM full-screen console */
+extern int fsmode, xb_fslkey, xb_fsupd;
+int fs_on(void);
+void fs_off(void);
+void fs_clear(void);
+int fs_say(int r, int c, const char *txt, const char *color);
+int fs_get(int r, int c, const char *txt, int numeric, const char *color);
+void fs_protect(int id);
+void fs_cursor(int id);
+void fs_alarm(void);
+char *fs_text(int id);
+int fs_readscreen(int *type, int *pf);
+V fs_convert(V old, const char *line, int upper);
+void fs_browse(int a, int *flds, int nflds);
+void fs_edit(int a);
+void fs_append(int a);
+static int *gt_fid = NULL;       /* the GDSM field of each GET */
+
 static void gt_grow(long need)
 {
     long nc2;
@@ -40,6 +58,7 @@ static void gt_grow(long need)
     gt_when = (int *)xrealloc(gt_when, nc2 * (long)sizeof(int));
     gt_row = (int *)xrealloc(gt_row, nc2 * (long)sizeof(int));
     gt_col = (int *)xrealloc(gt_col, nc2 * (long)sizeof(int));
+    gt_fid = (int *)xrealloc(gt_fid, nc2 * (long)sizeof(int));
     gtcap = nc2;
 }
 
@@ -300,6 +319,13 @@ static void doset(int s)
         setunique = (onoff == 1);
         return;
     }
+    if (strcmp(nm, "GDSM") == 0 || strcmp(nm, "GDDM") == 0) {
+        if (onoff == 1) {
+            if (fs_on() == 0)
+                errout("SET GDSM ON: no full screen here, the console stays line by line");
+        } else if (onoff == 2) fs_off();
+        return;
+    }
     if (strcmp(nm, "DECIMALS") == 0) {
         setdec = evint(nb[s], 2);
         return;
@@ -378,6 +404,10 @@ static void clearmem(void)
 
 static void doclear(int s)
 {
+    if (nf[s] == 1 && fsmode == 1) {
+        fs_clear();
+        ngets = 0;
+    }
     if (nf[s] == 2 || nf[s] == 3) clearmem();
     if (nf[s] == 3) closeallareas();
 }
@@ -510,6 +540,7 @@ void execcmd(int s)
         a = needarea();
         if (ctl != 0) return;
         if (nf[s] == 2) doappendfrom(s);
+        else if (nf[s] == 3) fs_append(a);
         else dbappend(a);
     } else if (cmd == C_CONTINUE) docontinue();
     else if (cmd == C_PACK) {
@@ -548,6 +579,25 @@ void execcmd(int s)
     else if (cmd == C_INPUT) doinput(s);
     else if (cmd == C_WAIT) dowait(s);
     else if (cmd == C_READ) doread();
+    else if (cmd == C_BROWSE) {
+        int fl[32], nfl = 0, x, fi;
+        a = needarea();
+        if (ctl != 0) return;
+        for (x = nb[s]; x > 0 && nfl < 32; x = nx[x]) {
+            fi = fieldfind(a, na[x]);
+            if (fi == 0) {
+                (void)rterr("DBFNTX", 1003, "Field does not exist", snm[na[x]]);
+                return;
+            }
+            fl[nfl++] = fi;
+        }
+        fs_browse(a, fl, nfl);
+    } else if (cmd == C_EDIT) {
+        a = needarea();
+        if (ctl != 0) return;
+        if (nb[s] > 0) dbgoto(a, evint(nb[s], 1));
+        fs_edit(a);
+    }
     else if (cmd == C_QUIT) doquit(0);
     else if (cmd == C_RELEASE) dorelease(s);
     else if (cmd == C_STORE) dostore(s);
@@ -954,6 +1004,33 @@ void execsayget(int s)
     c = evint(nb[s], 0);
     if (ctl != 0) return;
     atpos(r, c);
+    if (fsmode == 1) {            /* on the GDSM screen */
+        int col = c;
+        if (nc[s] > 0) {
+            v = evalnode(nc[s]);
+            if (ctl != 0) return;
+            txt = valstr(v);
+            if (na[hold] > 0) txt = xtransform(v, evstr(na[hold]));
+            col = fs_say(r, c, txt, "");
+            if (nd[s] > 0) col++;
+        }
+        if (nd[s] > 0) {
+            ngets = ngets + 1;
+            gt_grow(ngets);
+            gt_node[ngets] = nd[s];
+            gt_pic[ngets] = nb[hold];
+            gt_valid[ngets] = nc[hold];
+            gt_when[ngets] = nd[hold];
+            gt_row[ngets] = r;
+            gt_col[ngets] = col;
+            v = evalnode(nd[s]);
+            if (ctl != 0) return;
+            txt = valstr(v);
+            if (nb[hold] > 0) txt = xtransform(v, evstr(nb[hold]));
+            gt_fid[ngets] = fs_get(r, col, txt, isnum(v), "");
+        }
+        return;
+    }
     if (nc[s] > 0) {
         v = evalnode(nc[s]);
         if (ctl != 0) return;
@@ -982,6 +1059,47 @@ void execsayget(int s)
     }
 }
 
+/* READ on the GDSM screen: the fields back into the GET variables;
+   a VALID that fails puts the cursor back on its field; PA keys, CLEAR
+   and closing the window abandon the READ (as Esc) */
+static void fsread(void)
+{
+    long g;
+    int first = 0, t, pf, bad, upd = 0;
+    char *line;
+    V old;
+
+    for (g = 1; g <= ngets; g++) {
+        if (gt_when[g] > 0 && condval(gt_when[g]) == 0) {
+            fs_protect(gt_fid[g]);
+            continue;
+        }
+        if (first == 0) first = gt_fid[g];
+    }
+    if (first > 0) fs_cursor(first);
+    for (;;) {
+        if (fs_readscreen(&t, &pf) > 0) upd = 1;
+        if (t == 2 || t == 3 || t == 5) break;
+        bad = 0;
+        for (g = 1; g <= ngets; g++) {
+            if (gt_when[g] > 0 && condval(gt_when[g]) == 0) continue;
+            old = evalnode(gt_node[g]);
+            if (ctl != 0) return;
+            line = fs_text(gt_fid[g]);
+            assignto(gt_node[g], fs_convert(old, line,
+                     gt_pic[g] > 0 && strchr(evstr(gt_pic[g]), '!') != NULL));
+            if (ctl != 0) return;
+            if (gt_valid[g] > 0 && bad == 0 && condval(gt_valid[g]) == 0)
+                bad = (int)g;
+        }
+        if (bad == 0 || t != 0) break;
+        fs_alarm();
+        fs_cursor(gt_fid[bad]);
+    }
+    xb_fsupd = upd;
+    ngets = 0;
+}
+
 /* READ: one input line per pending GET; an empty line keeps the
    value */
 static void doread(void)
@@ -993,6 +1111,10 @@ static void doread(void)
     long w, ll;
     Sb b;
 
+    if (fsmode == 1) {
+        fsread();
+        return;
+    }
     ng = ngets;
     for (g = 1; g <= ng; g++) {
         nd2 = gt_node[g];

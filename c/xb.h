@@ -277,8 +277,8 @@ void flushout(void);
 void errout(const char *s);     /* stderr + newline, flushes stdout */
 
 /* --- numbers, dates, ops (ops.c) */
-extern int gy, gm, gd;
-void jdn2ymd(long j);           /* sets gy gm gd */
+extern int gdyear, gdmon, gdday;
+void jdn2ymd(long j);           /* sets gdyear gdmon gdday */
 long ymd2jdn(int y, int m, int d);
 char *pad2(int n);
 char *pad4(int n);
@@ -434,6 +434,7 @@ void dbgobottom(int a);
 void dbgoto(int a, int r);
 void dbskip(int a, int n);
 void dbappend(int a);
+void dbunappend(int a);
 void dbdelete(int a, int flag);
 int isdeleted(int a);
 void dbpack(int a);

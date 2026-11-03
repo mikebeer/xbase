@@ -26,6 +26,8 @@ static void dothelp(void)
         "  INDEX ON key TO file   SET INDEX TO file   SEEK key",
         "  LOCATE FOR cond   COUNT TO var   SUM field TO var",
         "  x := expr   STORE expr TO var   SET FILTER TO cond",
+        "  BROWSE   BROWSE FIELDS f, ...   EDIT   EDIT n   APPEND   (full screen)",
+        "  SET GDSM ON / OFF        @ r, c SAY ... GET ... and READ on the screen",
         "  DO prog      runs prog.prg; its procedures stay known",
         "  IF, DO WHILE, FOR ... go on over the next lines up to the END",
         "Functions: dbCreate(), RecCount(), Upper(), Str() ... (the manual)",

@@ -138,3 +138,5 @@
 #define C_BOX 45
 #define C_PUBLIC 46
 #define C_CLS 47
+#define C_BROWSE 48     /* BROWSE [FIELDS f, ...] (fs.c) */
+#define C_EDIT 49       /* EDIT / CHANGE [n] (fs.c) */

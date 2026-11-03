@@ -92,7 +92,7 @@ static V p_year(int base, int n)
     if (!isdate(P(1))) return argerr("YEAR");
     if (DJ(P(1)) == 0) return mkint(0);
     jdn2ymd(DJ(P(1)));
-    return mkint(gy);
+    return mkint(gdyear);
 }
 
 /* MONTH */
@@ -102,7 +102,7 @@ static V p_month(int base, int n)
     if (!isdate(P(1))) return argerr("MONTH");
     if (DJ(P(1)) == 0) return mkint(0);
     jdn2ymd(DJ(P(1)));
-    return mkint(gm);
+    return mkint(gdmon);
 }
 
 /* DAY */
@@ -112,7 +112,7 @@ static V p_day(int base, int n)
     if (!isdate(P(1))) return argerr("DAY");
     if (DJ(P(1)) == 0) return mkint(0);
     jdn2ymd(DJ(P(1)));
-    return mkint(gd);
+    return mkint(gdday);
 }
 
 /* DOW */
@@ -143,7 +143,7 @@ static V p_cmonth(int base, int n)
     if (!isdate(P(1))) return argerr("CMONTH");
     if (DJ(P(1)) == 0) return mkstr("");
     jdn2ymd(DJ(P(1)));
-    return mkstr(mnames[gm - 1]);
+    return mkstr(mnames[gdmon - 1]);
 }
 
 /* DTOC */

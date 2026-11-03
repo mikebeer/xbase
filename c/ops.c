@@ -2,7 +2,7 @@
    C port of src/40_ops.crexx */
 #include "xb.h"
 
-int gy = 0, gm = 0, gd = 0;
+int gdyear = 0, gdmon = 0, gdday = 0;
 
 void jdn2ymd(long j)
 {
@@ -13,9 +13,9 @@ void jdn2ymd(long j)
     d = (4 * c + 3) / 1461L;
     e = c - 1461L * d / 4;
     m = (5 * e + 2) / 153;
-    gd = (int)(e - (153 * m + 2) / 5 + 1);
-    gm = (int)(m + 3 - 12 * (m / 10));
-    gy = (int)(100 * b + d - 4800 + m / 10);
+    gdday = (int)(e - (153 * m + 2) / 5 + 1);
+    gdmon = (int)(m + 3 - 12 * (m / 10));
+    gdyear = (int)(100 * b + d - 4800 + m / 10);
 }
 
 long ymd2jdn(int y, int m, int d)
@@ -59,20 +59,20 @@ char *datefmt(long j, const char *fmt)
     i = 0;
     while (i < n) {
         if (strncmp(u + i, "YYYY", 4) == 0) {
-            t = pad4(gy);
+            t = pad4(gdyear);
             sb_adds(&b, t);
             i += 4;
         } else if (strncmp(u + i, "YY", 2) == 0) {
-            if (setcentury == 1) t = pad4(gy);
-            else t = pad2(gy % 100);
+            if (setcentury == 1) t = pad4(gdyear);
+            else t = pad2(gdyear % 100);
             sb_adds(&b, t);
             i += 2;
         } else if (strncmp(u + i, "MM", 2) == 0) {
-            t = pad2(gm);
+            t = pad2(gdmon);
             sb_adds(&b, t);
             i += 2;
         } else if (strncmp(u + i, "DD", 2) == 0) {
-            t = pad2(gd);
+            t = pad2(gdday);
             sb_adds(&b, t);
             i += 2;
         } else {
@@ -92,7 +92,7 @@ char *dtos(long j)
 {
     if (j == 0) return xstrdup("        ");
     jdn2ymd(j);
-    return xfmt("%04d%02d%02d", gy, gm, gd);
+    return xfmt("%04d%02d%02d", gdyear, gdmon, gdday);
 }
 
 long parsedate(const char *s, const char *fmt)
@@ -153,7 +153,7 @@ long parsedate(const char *s, const char *fmt)
     {
         long j = ymd2jdn(y, m, d);
         jdn2ymd(j);
-        if (gd != d || gm != m) return 0;
+        if (gdday != d || gdmon != m) return 0;
         return j;
     }
 }

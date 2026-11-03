@@ -142,12 +142,27 @@ static V p_inkey(int base, int n)
     return mkint(readkey());
 }
 
-/* NEXTKEY LASTKEY */
+/* NEXTKEY: none waiting; LASTKEY: the key that ended the last
+   full-screen READ, BROWSE or EDIT (fs.c), else 0 */
+extern int xb_fslkey, xb_fsupd;
 static V p_nextkey(int base, int n)
 {
     (void)base;
     (void)n;
     return mkint(0);
+}
+static V p_lastkey(int base, int n)
+{
+    (void)base;
+    (void)n;
+    return mkint(xb_fslkey);
+}
+/* UPDATED: whether the last full-screen READ changed a field */
+static V p_updated(int base, int n)
+{
+    (void)base;
+    (void)n;
+    return mklog(xb_fsupd != 0);
 }
 
 /* ALERT */
@@ -258,7 +273,9 @@ void lib3_init(void)
             "SETMODE|SCROLL|DISPBEGIN|DISPEND|SETKEY|HB_SETKEYSAVE|"
             "HB_KEYPUT", p_setcolor, 0, -1);
     addprim("INKEY|HB_KEYSTD|HB_KEYINKEY", p_inkey, 0, 2);
-    addprim("NEXTKEY|LASTKEY", p_nextkey, 0, 0);
+    addprim("NEXTKEY", p_nextkey, 0, 0);
+    addprim("LASTKEY", p_lastkey, 0, 0);
+    addprim("UPDATED", p_updated, 0, 0);
     addprim("ALERT", p_alert, 1, 4);
     addprim("SET", p_set, 1, 3);
     addprim("__SETCENTURY|SETCENTURY", p_setcentury, 0, 1);

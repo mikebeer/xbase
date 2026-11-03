@@ -1102,6 +1102,20 @@ void dbappend(int a)
     relsync(a);
 }
 
+/* take back the last record, just appended and left empty (APPEND's
+   full-screen form, fs.c); the indexes are rebuilt without it */
+void dbunappend(int a)
+{
+    int n;
+    if (!isused(a) || wa_nrec[a] < 1) return;
+    n = wa_nrec[a];
+    recs[ridx(a, n)] = NULL;
+    wa_nrec[a] = n - 1;
+    wa_dirty[a] = 1;
+    if (wa_nix[a] > 0) reindexall(a);
+    dbgobottom(a);
+}
+
 void dbdelete(int a, int flag)
 {
     int r, k, rl;

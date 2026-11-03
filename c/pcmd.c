@@ -270,7 +270,7 @@ int parsecmd(void)
             skipline();
             return n;
         }
-        nf[n] = 1;
+        nf[n] = 3;                 /* APPEND: the full-screen form (fs.c) */
         return n;
     }
     if (isscopedw(w)) return parsescopedw(w);
@@ -404,6 +404,35 @@ int parsecmd(void)
     if (strcmp(w, "CREATE") == 0) {
         perr("Command CREATE is not supported (use dbCreate())");
         return 0;
+    }
+    /* full-screen table commands (fs.c): BROWSE [FIELDS f1, f2 ...],
+       EDIT / CHANGE [n] */
+    if (strcmp(w, "BROWSE") == 0) {
+        int head = 0, tail = 0, f;
+        adv();
+        n = mkcmd(C_BROWSE);
+        if (isword("FIELDS")) {
+            adv();
+            while (tk[tp] == E_IDENT) {
+                f = mknode(K_IDENT, tv[tp], 0, 0);
+                adv();
+                if (head == 0) head = f;
+                else nx[tail] = f;
+                tail = f;
+                if (isop(",")) adv();
+                else break;
+            }
+        }
+        nb[n] = head;
+        skipline();
+        return n;
+    }
+    if (strcmp(w, "EDIT") == 0 || strcmp(w, "CHANGE") == 0) {
+        adv();
+        n = mkcmd(C_EDIT);
+        if (atend() == 0) { int t_ = parseexpr(); nb[n] = t_; }
+        skipline();
+        return n;
     }
     return 0;
 }

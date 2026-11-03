@@ -69,6 +69,26 @@ Dogwood GmbH              42.10
 
 `make test-c` also runs `tests/dot/*.in` at the prompt and compares the screen with `tests/dot/*.out`.
 
+## Full screen (C version with GDSM)
+
+Built with [GDSM](https://github.com/mikebeer/gdsm) (`make -C c GDSM=/path/to/gdsm`, which needs GDSM's
+`build/libgdsm.a`), the console can be a full screen: a 3270 on CMS, or GDSM's window and TN3270 drivers on
+the PC.
+
+* `SET GDSM ON` / `OFF`: `@ r, c SAY ... GET ...` become screen fields, `READ` reads the whole screen (with
+  `PICTURE "@!"`, `VALID` and `WHEN`), and `CLS` clears it. `LastKey()` (Clipper key codes, PF3 = -2) and
+  `Updated()` follow the READ.
+* `BROWSE` / `BROWSE FIELDS f1, f2`: a page of records, one per line, with the fields as input columns.
+  Enter saves, PF7/PF8 page, PF3 ends.
+* `EDIT` / `EDIT n` / `CHANGE`: one record as a form. Enter saves and goes to the next record, PF7 to the
+  previous one, PF3 ends.
+* `APPEND`: new records filled in as forms, one after the other. A form left untouched (or PF3 on it)
+  ends, and that empty record is not kept.
+
+Without GDSM, or on a console that isn't a full screen, the same commands work line by line: BROWSE lists a
+page, and EDIT and APPEND ask for each field (Enter keeps a value, `.` ends). `make test-gdsm GDSM=...` runs
+`tests/gdsm/` headless (GDSM's null driver, keys from `tests/gdsm/*.keys`).
+
 ## What it understands
 
 * **Language**: `FUNCTION`/`PROCEDURE`/`STATIC`/`INIT`/`EXIT`, `LOCAL`/`STATIC`/`PRIVATE`/`PUBLIC`/`MEMVAR`,

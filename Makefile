@@ -31,6 +31,11 @@ c:
 test-c: c
 	XB=$(CURDIR)/c/xbase-c XBDOT=1 ./tests/run.sh
 
+# the C version with GDSM (mikebeer/gdsm built in GDSM=...): the full-screen tests too
+test-gdsm:
+	$(MAKE) -C c GDSM=$(GDSM) GDSM_LIBS="$(GDSM_LIBS)"
+	XB=$(CURDIR)/c/xbase-c XBDOT=1 XBGDSM=1 ./tests/run.sh
+
 clean:
 	rm -rf build
 	$(MAKE) -C c clean

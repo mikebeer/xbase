@@ -54,8 +54,11 @@ void runprogram(void)
     for (i = 1; i <= nexitp; i++) runfn(exitfns[i], 0);
 }
 
+void fs_off(void);
+
 void shutdown_all(void)
 {
+    fs_off();
     closeallareas();
     flushout();
     if (outcol > 0) {

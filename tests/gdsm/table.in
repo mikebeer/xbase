@@ -1,0 +1,9 @@
+SET GDSM ON
+dbCreate( "cust", { { "ID", "N", 6, 0 }, { "NAME", "C", 12, 0 }, { "BAL", "N", 8, 2 } } )
+USE cust
+APPEND
+LIST
+EDIT 1
+LIST
+BROWSE
+QUIT
