@@ -2,7 +2,7 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -std=c89 -pedantic -Wall -Wextra
 LIBS    = -lm
-SRC     = core.c ops.c eval.c exec.c main.c \
+SRC     = core.c ops.c eval.c exec.c main.c dot.c \
           lex.c pexpr.c pstmt.c pclass.c pcmd.c cmd.c \
           dbf.c lib1.c lib2.c lib3.c lib4.c io.c
 OBJ     = $(SRC:.c=.o)

@@ -1074,7 +1074,8 @@ void assignnew(int n, V val)
                 if (fieldfind(curarea, sym) > 0) isfld = 1;
             }
             if (isfld == 0) {
-                pushprivate(sym);
+                /* at the dot prompt it stays for the next lines */
+                if (dotmode == 0) pushprivate(sym);
                 smv[sym] = val;
                 smvd[sym] = 1;
                 return;

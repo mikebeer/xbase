@@ -692,6 +692,12 @@ static void lexlogical(const char *ln)
     addtok(E_EOL, "", 0);
 }
 
+/* one line typed at the dot prompt (dot.c), as lexfile does a line */
+void lexline(const char *ln)
+{
+    lexlogical(ln);
+}
+
 /* the lines of a file, 1-based, in a new array; NULL if it cannot be
    opened.  *cnt receives the number of lines */
 static char **readlines(const char *fname, long *cnt)

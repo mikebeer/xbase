@@ -46,6 +46,29 @@ It reproduces the cREXX number formatting (16 significant digits) and
 the quirks of the library; for instance `@ r, c SAY` and `DevPos` move
 to a new row but do not pad to the column.
 
+## The dot prompt (C version)
+
+`c/xbase-c` without a program file gives dBASE's dot prompt. Each line typed runs at once; tables,
+indexes, `SET` values and memory variables stay from line to line. An assignment to a new name (`x := 5`,
+`STORE 5 TO x`, `SUM BAL TO t`) makes a memory variable that the next lines see. `IF`, `DO WHILE`, `FOR`,
+`DO CASE` and `BEGIN SEQUENCE` go on over the next lines (prompt `..`) up to their end. `DO prog` loads and
+runs `prog.prg`, and its procedures stay callable. An error is reported and the prompt comes back. `HELP`
+lists the commands, and `QUIT` (or the end of the input) ends it.
+
+```
+$ c/xbase-c
+xBase dot prompt (HELP, QUIT)
+. USE customer
+. LIST NAME, CITY
+      1 Alder & Sons         Zurich
+. SEEK "DOG"
+. ? NAME, BAL
+Dogwood GmbH              42.10
+. QUIT
+```
+
+`make test-c` also runs `tests/dot/*.in` at the prompt and compares the screen with `tests/dot/*.out`.
+
 ## What it understands
 
 * **Language**: `FUNCTION`/`PROCEDURE`/`STATIC`/`INIT`/`EXIT`, `LOCAL`/`STATIC`/`PRIVATE`/`PUBLIC`/`MEMVAR`,

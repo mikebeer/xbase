@@ -434,6 +434,10 @@ void assignto(int n, V val)
                 return;
             }
         }
+        if (dotmode == 1) {       /* the dot prompt: a new memory variable */
+            setmemvar(sym, val);
+            return;
+        }
         rterr("BASE", 1003, "Variable does not exist", snm[sym]);
         return;
     }

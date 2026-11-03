@@ -1,0 +1,18 @@
+xBase dot prompt (HELP, QUIT)
+. .         10
+. . . . . . .       1 Ann                33
+      2 Bob                41
+. Structure for database: pp.dbf
+Number of data records:       2
+Field  Field Name  Type       Width    Dec
+    1  NM          Character     10    
+    2  AGE         Numeric        3      0
+** Total **                   14
+. .. .. .. .. big
+. .. ..          1         2         3
+. Error BASE/1003  Variable does not exist: NOSUCH
+. still here
+. Error: Syntax error near BAR
+. . . .T.          2 Bob       
+. .         74
+. 

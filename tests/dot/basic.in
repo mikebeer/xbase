@@ -1,0 +1,28 @@
+x := 5
+? x * 2
+dbCreate( "pp", { { "NM", "C", 10, 0 }, { "AGE", "N", 3, 0 } } )
+USE pp
+APPEND BLANK
+REPLACE NM WITH "Ann", AGE WITH 33
+APPEND BLANK
+REPLACE NM WITH "Bob", AGE WITH 41
+LIST
+DISPLAY STRUCTURE
+IF x > 3
+? "big"
+ELSE
+? "small"
+ENDIF
+FOR i := 1 TO 3
+?? i
+NEXT
+? nosuch
+? "still here"
+foo bar baz
+INDEX ON Upper( NM ) TO ppnm
+SEEK "BOB"
+? Found(), RecNo(), NM
+SUM AGE TO t
+? t
+QUIT
+? "not shown"

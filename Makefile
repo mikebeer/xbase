@@ -29,7 +29,7 @@ c:
 	$(MAKE) -C c
 
 test-c: c
-	XB=$(CURDIR)/c/xbase-c ./tests/run.sh
+	XB=$(CURDIR)/c/xbase-c XBDOT=1 ./tests/run.sh
 
 clean:
 	rm -rf build

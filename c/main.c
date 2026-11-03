@@ -80,9 +80,13 @@ int main(int argc, char **argv)
     fvgrow();
     ftop = 0;
     initall();
-    if (argc < 2) {
-        fputs("usage: xbase program.prg [arguments]\n", stderr);
-        return 2;
+    if (argc < 2) {               /* no program: the dot prompt */
+        incpath = progdir;
+        nargvs = 0;
+        argvs = (char **)xmalloc((long)sizeof(char *));
+        dotprompt();
+        shutdown_all();
+        return exitcode;
     }
     progname = argv[1];
     progdir = dirof(progname);

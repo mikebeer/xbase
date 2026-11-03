@@ -300,6 +300,26 @@ static int parsemethoddef(void)
     return fid;
 }
 
+/* the dot prompt (dot.c): the statements from tp to E_EOF become a
+   function of their own, without parameters; 0 after a syntax error */
+int parsedot(void)
+{
+    int fid, oldnvar, body;
+
+    fid = newfn("__DOT__");
+    px_curfn = fid;
+    px_infunc = 1;
+    savenvar = px_nvar;
+    px_curcx = px_newctx(0, 0);
+    fnpar[fid] = 0;
+    oldnvar = savenvar;
+    body = parsestmts();
+    if (perrflag == 0 && tk[tp] != E_EOF)
+        perr(px_cat("Syntax error near ", ts[tp]));
+    endfunc(fid, body, oldnvar);
+    return perrflag == 1 ? 0 : fid;
+}
+
 /* the whole program */
 int parseprogram(void)
 {

@@ -4,6 +4,7 @@
 # Each test runs in a scratch directory, so tables and indexes it creates vanish.
 #   tests/run.sh            run all tests
 #   tests/run.sh --update   rewrite the .out files from the current output
+#   XBDOT=1 also runs tests/dot/*.in at the dot prompt (C version)
 HERE=$(cd "$(dirname "$0")" && pwd)
 XB=${XB:-"$HERE/../xbase"}   # XB=c/xbase-c tests the C version
 pass=0; fail=0
@@ -25,6 +26,25 @@ for src in "$HERE"/*.prg; do
     printf '%s\n' "$out" | diff - "$HERE/$name.out" | head -10
   fi
 done
+# the dot prompt (C version only, XBDOT=1): tests/dot/NAME.in typed at the
+# prompt, the screen compared with tests/dot/NAME.out
+if [ "${XBDOT:-0}" = 1 ]; then
+  for in in "$HERE"/dot/*.in; do
+    name=dot/$(basename "$in" .in)
+    work=$(mktemp -d)
+    out=$(cd "$work" && "$XB" < "$in" 2>&1)
+    rm -rf "$work"
+    if [ "$1" = "--update" ]; then
+      printf '%s\n' "$out" > "$HERE/$name.out"; echo "updated $name"; continue
+    fi
+    if [ "$out" = "$(cat "$HERE/$name.out")" ]; then
+      pass=$((pass+1)); echo "ok    $name"
+    else
+      fail=$((fail+1)); echo "FAIL  $name"
+      printf '%s\n' "$out" | diff - "$HERE/$name.out" | head -10
+    fi
+  done
+fi
 [ "$1" = "--update" ] && exit 0
 echo "$pass passed, $fail failed"
 [ $fail = 0 ]

@@ -356,6 +356,10 @@ void runfn(int f, int withargs);
 
 /* ---------------------------------------- front end (parser) */
 int lexfile(const char *fname);     /* 0 ok, 1 cannot open */
+void lexline(const char *ln);       /* one dot-prompt line */
+int parsedot(void);                 /* dot prompt statements -> fn */
+void dotprompt(void);               /* dot.c */
+extern int dotmode;                 /* 1 at the dot prompt */
 void lexchunk(const char *ln, int depth);
 void addtok(int kind, const char *text, int sp);
 void definemacro(const char *name, const char *par,
